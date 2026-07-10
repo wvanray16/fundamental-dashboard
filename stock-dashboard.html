@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Fundamentals Ã¢â‚¬â€ Long-Term Stock Assessment</title>
+<title>Fundamentals — Long-Term Stock Assessment</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -405,8 +405,8 @@
   .rp-explain details { border: 1px solid var(--rline); border-radius: 9px; padding: 0; margin-bottom: 8px; background: var(--rpanel); }
   .rp-explain summary { cursor: pointer; color: var(--gold); font-size: 13px; font-weight: 600; padding: 12px 14px; list-style: none; }
   .rp-explain summary::-webkit-details-marker { display: none; }
-  .rp-explain summary::before { content: "Ã¢â€“Â¸ "; color: var(--rfaint); }
-  .rp-explain details[open] summary::before { content: "Ã¢â€“Â¾ "; }
+  .rp-explain summary::before { content: "▸ "; color: var(--rfaint); }
+  .rp-explain details[open] summary::before { content: "▾ "; }
   .rp-explain .ex-body { padding: 0 14px 13px; color: var(--rmuted); font-size: 13px; line-height: 1.6; }
 
   .rp-breakdown { background: var(--rpanel); border: 1px solid var(--rline); border-radius: 12px; padding: 16px 18px; }
@@ -464,12 +464,12 @@
 <body>
   <div class="commandbar">
     <div class="commandbar-inner">
-      <div class="wordmark"><b>FUND</b>Ã‚Â·AMENTALS</div>
+      <div class="wordmark"><b>FUND</b>·AMENTALS</div>
       <div class="search">
-        <input id="ticker" type="text" placeholder="Enter ticker Ã¢â‚¬â€ AAPL, MSFT, KOÃ¢â‚¬Â¦" autocomplete="off" spellcheck="false" maxlength="12" />
+        <input id="ticker" type="text" placeholder="Enter ticker — AAPL, MSFT, KO…" autocomplete="off" spellcheck="false" maxlength="12" />
         <button id="go">Analyze</button>
       </div>
-      <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">checking serverÃ¢â‚¬Â¦</span></div>
+      <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">checking server…</span></div>
       <button id="report-btn" class="report-btn" disabled>Risk Report</button>
     </div>
   </div>
@@ -477,7 +477,7 @@
   <main id="main">
     <div class="placeholder" id="placeholder">
       <h2>Assess a business before you own it for years</h2>
-      <p>Enter any ticker to pull live fundamentals Ã¢â‚¬â€ profitability, growth, cash flow,<br>balance sheet, valuation, capital allocation and dividends Ã¢â‚¬â€ with the history behind each.</p>
+      <p>Enter any ticker to pull live fundamentals — profitability, growth, cash flow,<br>balance sheet, valuation, capital allocation and dividends — with the history behind each.</p>
     </div>
   </main>
 
@@ -495,7 +495,7 @@ let currentSymbol = null;
 // ---------- formatting ----------
 const nf = new Intl.NumberFormat("en-US");
 function money(n, cur = "USD") {
-  if (n == null) return "Ã¢â‚¬â€";
+  if (n == null) return "—";
   const abs = Math.abs(n);
   const sign = n < 0 ? "-" : "";
   const sym = cur === "USD" ? "$" : "";
@@ -505,9 +505,9 @@ function money(n, cur = "USD") {
   if (abs >= 1e3)  return `${sign}${sym}${(abs/1e3).toFixed(1)}K`;
   return `${sign}${sym}${abs.toFixed(2)}`;
 }
-function pct(n, dp = 1) { return n == null ? "Ã¢â‚¬â€" : `${(n*100).toFixed(dp)}%`; }
-function ratio(n, dp = 2) { return n == null ? "Ã¢â‚¬â€" : `${n.toFixed(dp)}Ãƒâ€”`; }
-function plain(n, dp = 2) { return n == null ? "Ã¢â‚¬â€" : n.toFixed(dp); }
+function pct(n, dp = 1) { return n == null ? "—" : `${(n*100).toFixed(dp)}%`; }
+function ratio(n, dp = 2) { return n == null ? "—" : `${n.toFixed(dp)}×`; }
+function plain(n, dp = 2) { return n == null ? "—" : n.toFixed(dp); }
 function fmtDate(iso) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -543,7 +543,7 @@ function earningsMeta(ev) {
   if (!iso) return "";
   let dateStr = fmtDate(iso);
   if (ev.nextEarningsDateEnd && ev.nextEarningsDateEnd !== iso) {
-    dateStr += ` Ã¢â‚¬â€œ ${fmtDate(ev.nextEarningsDateEnd)}`;
+    dateStr += ` – ${fmtDate(ev.nextEarningsDateEnd)}`;
   }
   const n = daysUntil(iso);
   const soon = n != null && n >= 0 && n <= 7;
@@ -551,7 +551,7 @@ function earningsMeta(ev) {
   if (n != null) tags.push(countdownText(n));
   if (ev.earningsDateIsEstimate) tags.push("est.");
   if (ev.epsEstimate != null) tags.push(`EPS est. ${money(ev.epsEstimate)}`);
-  const suffix = tags.length ? ` Ã‚Â· ${tags.join(" Ã‚Â· ")}` : "";
+  const suffix = tags.length ? ` · ${tags.join(" · ")}` : "";
   const color = soon ? "color:var(--warn);" : "";
   return `<span style="${color}">Next earnings <b style="${color}">${dateStr}</b>${suffix}</span>`;
 }
@@ -590,7 +590,7 @@ async function analyze(symbol) {
   if (!symbol) return;
   const main = document.getElementById("main");
   document.getElementById("go").disabled = true;
-  main.innerHTML = `<div class="loading"><div class="spin"></div>Pulling fundamentals for ${symbol}Ã¢â‚¬Â¦</div>`;
+  main.innerHTML = `<div class="loading"><div class="spin"></div>Pulling fundamentals for ${symbol}…</div>`;
   Object.values(chartRegistry).forEach(c => c.destroy()); chartRegistry = {}; toggleCfg = {};
 
   try {
@@ -622,7 +622,7 @@ function render(d) {
 
   const changeCls = p.changePct == null ? "" : (p.changePct >= 0 ? "pos" : "neg");
   const changeStr = p.changePct == null ? "" :
-    `${p.changePct >= 0 ? "Ã¢â€“Â²" : "Ã¢â€“Â¼"} ${Math.abs(p.changePct).toFixed(2)}%`;
+    `${p.changePct >= 0 ? "▲" : "▼"} ${Math.abs(p.changePct).toFixed(2)}%`;
 
   document.getElementById("main").innerHTML = `
     <div class="readout reveal">
@@ -639,8 +639,8 @@ function render(d) {
         ${p.sector ? `<span>Sector <b>${escapeHtml(p.sector)}</b></span>` : ""}
         ${p.industry ? `<span>Industry <b>${escapeHtml(p.industry)}</b></span>` : ""}
         <span>Market cap <b>${money(p.marketCap, cur)}</b></span>
-        ${p.fiftyTwoWeekLow != null ? `<span>52-wk range <b>${money(p.fiftyTwoWeekLow,cur)} Ã¢â‚¬â€œ ${money(p.fiftyTwoWeekHigh,cur)}</b></span>` : ""}
-        ${p.analystRecommendation ? `<span>Analysts <b>${escapeHtml(p.analystRecommendation)}</b>${p.targetMeanPrice?` Ã‚Â· target <b>${money(p.targetMeanPrice,cur)}</b>`:""}</span>` : ""}
+        ${p.fiftyTwoWeekLow != null ? `<span>52-wk range <b>${money(p.fiftyTwoWeekLow,cur)} – ${money(p.fiftyTwoWeekHigh,cur)}</b></span>` : ""}
+        ${p.analystRecommendation ? `<span>Analysts <b>${escapeHtml(p.analystRecommendation)}</b>${p.targetMeanPrice?` · target <b>${money(p.targetMeanPrice,cur)}</b>`:""}</span>` : ""}
       </div>
     </div>
 
@@ -663,7 +663,7 @@ function render(d) {
 
     <div class="disclaimer">
       Live data via Yahoo Finance. Figures are as reported and may lag or contain gaps; historical
-      statements typically cover the last ~4 fiscal years. This tool is for research and education Ã¢â‚¬â€
+      statements typically cover the last ~4 fiscal years. This tool is for research and education —
       it is not financial advice or a recommendation to buy or sell any security. Do your own diligence
       and consider your time horizon, risk tolerance and diversification.
     </div>
@@ -684,8 +684,8 @@ function render(d) {
       tile("ROIC (latest yr, est.)", pct(lastVal(ts,"roic")), tone(lastVal(ts,"roic"),{good:.12,ok:.06})),
     ],
     charts: [
-      chartCard("margins", "Margins over time", "Gross Ã‚Â· operating Ã‚Â· net", true),
-      chartCard("roeTrend", "Return on equity over time", "Net income ÃƒÂ· shareholder equity"),
+      chartCard("margins", "Margins over time", "Gross · operating · net", true),
+      chartCard("roeTrend", "Return on equity over time", "Net income ÷ shareholder equity"),
     ],
   }));
   setupToggleableChart("margins", ts, tsQ, [
@@ -722,7 +722,7 @@ function render(d) {
       tile("Free cash flow", money(c.cashFlow.freeCashFlow, cur), c.cashFlow.freeCashFlow>0?"pos":c.cashFlow.freeCashFlow<0?"neg":""),
       tile("EBITDA", money(c.cashFlow.ebitda, cur)),
       tile("Total cash", money(c.cashFlow.totalCash, cur)),
-      tile("FCF ÃƒÂ· net income", ratio(fcfQuality(c)), tone(fcfQuality(c),{good:.9,ok:.5})),
+      tile("FCF ÷ net income", ratio(fcfQuality(c)), tone(fcfQuality(c),{good:.9,ok:.5})),
     ],
     charts: [
       chartCard("cashTrend", "Cash flow vs. earnings", "Operating CF, free CF and net income by year"),
@@ -748,7 +748,7 @@ function render(d) {
       tile("Interest coverage", coverageStr(lastVal(ts,"interestCoverage")), tone(lastVal(ts,"interestCoverage"),{good:8,ok:3})),
     ],
     charts: [
-      chartCard("deTrend", "Debt-to-equity over time", "Total debt ÃƒÂ· shareholder equity"),
+      chartCard("deTrend", "Debt-to-equity over time", "Total debt ÷ shareholder equity"),
       chartCard("debtEq", "Debt vs. equity", "Absolute debt and equity by year"),
     ],
   }));
@@ -772,7 +772,7 @@ function render(d) {
       tile("FCF yield", pct(c.valuation.fcfYield,2), tone(c.valuation.fcfYield,{good:.05,ok:.03})),
     ],
     charts: [
-      chartCard("peBars", "Earnings multiple", "Trailing vs. forward P/E Ã¢â‚¬â€ forward below trailing implies expected growth"),
+      chartCard("peBars", "Earnings multiple", "Trailing vs. forward P/E — forward below trailing implies expected growth"),
     ],
   }));
   simpleBars("peBars", ["Trailing P/E","Forward P/E"], [c.valuation.trailingPE, c.valuation.forwardPE], "var-accent");
@@ -789,8 +789,8 @@ function render(d) {
       tile("ROIC (latest yr, est.)", pct(lastVal(ts,"roic")), tone(lastVal(ts,"roic"),{good:.12,ok:.06})),
     ],
     charts: [
-      chartCard("sharesTrend", "Shares outstanding over time", "Diluted avg shares Ã¢â‚¬â€ falling = buybacks, rising = dilution"),
-      chartCard("roicTrend", "ROIC over time (estimated)", "NOPAT ÃƒÂ· (debt + equity) Ã¢â‚¬â€ value creation vs. cost of capital"),
+      chartCard("sharesTrend", "Shares outstanding over time", "Diluted avg shares — falling = buybacks, rising = dilution"),
+      chartCard("roicTrend", "ROIC over time (estimated)", "NOPAT ÷ (debt + equity) — value creation vs. cost of capital"),
     ],
   }));
   barChart("sharesTrend", sh, [ series("Shares", "shares", "var-warn") ], { axis: "count" });
@@ -806,7 +806,7 @@ function render(d) {
       tile("Dividend rate", money(c.dividend.dividendRate, cur)),
       tile("Payout ratio", pct(c.dividend.payoutRatio), tone(c.dividend.payoutRatio,{good:.6,ok:.9,higher:false})),
       tile("5-yr avg yield", pct(c.dividend.fiveYearAvgDividendYield/100 || null,2)),
-      tile("Ex-dividend date", fmtDate(ev.exDividendDate) || "Ã¢â‚¬â€"),
+      tile("Ex-dividend date", fmtDate(ev.exDividendDate) || "—"),
     ],
     charts: [],
   }));
@@ -825,7 +825,7 @@ function sectionBlock({ title, note, tiles, charts }) {
   return el;
 }
 function tile(label, val, cls = "") {
-  const na = val === "Ã¢â‚¬â€" ? "na" : "";
+  const na = val === "—" ? "na" : "";
   return `<div class="tile"><div class="label">${label}</div><div class="val ${cls} ${na}">${val}</div><div class="sub"></div></div>`;
 }
 function chartCard(id, title, note, toggle = false) {
@@ -844,7 +844,7 @@ function safeUrl(u) { return /^https?:\/\//i.test(u || "") ? u : "#"; }
 function fScorePanel(fs) {
   if (!fs || fs.evaluable === 0) {
     return `<div class="fscore reveal"><div class="fscore-head">
-      <div class="fscore-num na">Ã¢â‚¬â€<span>/9</span></div>
+      <div class="fscore-num na">—<span>/9</span></div>
       <div class="fscore-meta">
         <div class="cat">Piotroski F-Score</div>
         <div class="verdict" style="color:var(--faint)">Not enough historical data</div>
@@ -855,25 +855,25 @@ function fScorePanel(fs) {
   const tier = t >= 7 ? "strong" : t >= 4 ? "fair" : "weak";
   const color = tier === "strong" ? "var(--pos)" : tier === "fair" ? "var(--warn)" : "var(--neg)";
   const verdict = t >= 7 ? "Strong financial position"
-    : t >= 4 ? "Middling Ã¢â‚¬â€ mixed signals"
-    : "Weak Ã¢â‚¬â€ deteriorating signals";
+    : t >= 4 ? "Middling — mixed signals"
+    : "Weak — deteriorating signals";
   const groups = ["Profitability", "Leverage & Liquidity", "Efficiency"];
   const groupHtml = groups.map(g => {
     const items = fs.signals.filter(s => s.group === g).map(s => {
       const cls = s.pass === true ? "pass" : s.pass === false ? "fail" : "na";
-      const mark = s.pass === true ? "Ã¢Å“â€œ" : s.pass === false ? "Ã¢Å“â€”" : "Ã¢â‚¬â€œ";
+      const mark = s.pass === true ? "✓" : s.pass === false ? "✗" : "–";
       return `<div class="fs-signal ${cls}"><span class="mark">${mark}</span><span>${s.label}</span></div>`;
     }).join("");
     return `<div class="fscore-group"><h5>${g}</h5>${items}</div>`;
   }).join("");
-  const note = fs.evaluable < 9 ? ` Ã‚Â· ${fs.evaluable} of 9 signals had data` : "";
+  const note = fs.evaluable < 9 ? ` · ${fs.evaluable} of 9 signals had data` : "";
   return `<div class="fscore reveal">
     <div class="fscore-head">
       <div class="fscore-num" style="color:${color}">${t}<span>/9</span></div>
       <div class="fscore-meta">
         <div class="cat">Piotroski F-Score</div>
         <div class="verdict" style="color:${color}">${verdict}</div>
-        <div class="why">FY${fs.years.current} vs FY${fs.years.prior} Ã¢â‚¬â€ nine signals across profitability, leverage &amp; efficiency${note}</div>
+        <div class="why">FY${fs.years.current} vs FY${fs.years.prior} — nine signals across profitability, leverage &amp; efficiency${note}</div>
       </div>
     </div>
     <div class="fscore-groups">${groupHtml}</div>
@@ -893,13 +893,13 @@ function newsSection(news, symbol) {
               ${n.publishedAt ? `<span>${timeAgo(n.publishedAt)}</span>` : ""}
             </div>
             <div class="news-title">${escapeHtml(n.title)}</div>
-            ${related.length ? `<div class="news-tickers">${related.map(escapeHtml).join(" Ã‚Â· ")}</div>` : ""}
+            ${related.length ? `<div class="news-tickers">${related.map(escapeHtml).join(" · ")}</div>` : ""}
           </div>
         </a>`;
       }).join("")}</div>`
     : `<div class="news-empty">No recent headlines returned by the source for ${escapeHtml(symbol)}.</div>`;
   return `<section class="block reveal">
-    <div class="block-head"><h3>Headlines</h3><span class="note">Latest news related to ${escapeHtml(symbol)} Ã¢â‚¬â€ opens the source in a new tab</span></div>
+    <div class="block-head"><h3>Headlines</h3><span class="note">Latest news related to ${escapeHtml(symbol)} — opens the source in a new tab</span></div>
     ${body}
   </section>`;
 }
@@ -930,7 +930,7 @@ function baseOptions(axis, cur) {
   const yTick = {
     pct: v => (v*100).toFixed(0) + "%",
     money: v => money(v, cur),
-    ratio: v => v.toFixed(1) + "Ãƒâ€”",
+    ratio: v => v.toFixed(1) + "×",
     count: v => money(v, ""),
     raw: v => v,
   }[axis] || (v => v);
@@ -946,7 +946,7 @@ function baseOptions(axis, cur) {
         callbacks: { label: (ctx) => `${ctx.dataset.label}: ${
           axis==="pct" ? (ctx.parsed.y*100).toFixed(1)+"%"
           : axis==="money" ? money(ctx.parsed.y, cur)
-          : axis==="ratio" ? ctx.parsed.y.toFixed(2)+"Ãƒâ€”"
+          : axis==="ratio" ? ctx.parsed.y.toFixed(2)+"×"
           : axis==="count" ? money(ctx.parsed.y, "") + " shares"
           : ctx.parsed.y }` } },
     },
@@ -1030,11 +1030,11 @@ function simpleBars(id, labels, values, color) {
 // ---------- valuation helpers ----------
 function peTone(pe) { if (pe == null || pe < 0) return ""; if (pe <= 18) return "pos"; if (pe <= 30) return "warn"; return "neg"; }
 function deRatio(yahooDE) { return yahooDE == null ? null : yahooDE / 100; } // Yahoo reports D/E as a percentage
-function debtEquityStr(yahooDE) { const r = deRatio(yahooDE); return r == null ? "Ã¢â‚¬â€" : r.toFixed(2) + "Ãƒâ€”"; }
-function coverageStr(v) { return v == null ? "Ã¢â‚¬â€" : (v > 999 ? "999Ãƒâ€”+" : v.toFixed(1) + "Ãƒâ€”"); }
+function debtEquityStr(yahooDE) { const r = deRatio(yahooDE); return r == null ? "—" : r.toFixed(2) + "×"; }
+function coverageStr(v) { return v == null ? "—" : (v > 999 ? "999×+" : v.toFixed(1) + "×"); }
 function fcfQuality(c) { const fcf = c.cashFlow.freeCashFlow, ni = c.cashFlow.netIncomeToCommon; return (fcf != null && ni != null && ni > 0) ? fcf/ni : null; }
-function netDebtStr(n, cur) { return n == null ? "Ã¢â‚¬â€" : money(n, cur); } // negative = net cash
-function netDebtEbitdaStr(n) { return n == null ? "Ã¢â‚¬â€" : n.toFixed(2) + "Ãƒâ€”"; }
+function netDebtStr(n, cur) { return n == null ? "—" : money(n, cur); } // negative = net cash
+function netDebtEbitdaStr(n) { return n == null ? "—" : n.toFixed(2) + "×"; }
 function netDebtEbitdaTone(n) {
   if (n == null) return "";
   if (n <= 0) return "pos";                 // net cash
@@ -1054,7 +1054,7 @@ function computeGrades(c, ts) {
     const t = tier(s);
     g.push({ cat: "Profitability", tier: nm==null&&roe==null?"na":t,
       verdict: nm==null&&roe==null?"No data":cap(t),
-      why: nm!=null?`Net margin ${pct(nm)}, ROE ${pct(roe)}`:"Ã¢â‚¬â€" });
+      why: nm!=null?`Net margin ${pct(nm)}, ROE ${pct(roe)}`:"—" });
   }
   // Growth
   {
@@ -1076,7 +1076,7 @@ function computeGrades(c, ts) {
     const t = tier(s);
     g.push({ cat: "Cash Flow", tier: fcf==null?"na":t,
       verdict: fcf==null?"No data":cap(t),
-      why: fcf!=null?`FCF ${money(fcf)}${q!=null?`, ${ratio(q)} of NI`:""}`:"Ã¢â‚¬â€" });
+      why: fcf!=null?`FCF ${money(fcf)}${q!=null?`, ${ratio(q)} of NI`:""}`:"—" });
   }
   // Balance sheet
   {
@@ -1088,12 +1088,12 @@ function computeGrades(c, ts) {
     const t = tier(s);
     g.push({ cat: "Balance Sheet", tier: de==null&&cr==null?"na":t,
       verdict: de==null&&cr==null?"No data":cap(t),
-      why: `D/E ${de!=null?de.toFixed(2)+"Ãƒâ€”":"Ã¢â‚¬â€"}, curr ${plain(cr)}` });
+      why: `D/E ${de!=null?de.toFixed(2)+"×":"—"}, curr ${plain(cr)}` });
   }
   // Valuation (cheap/fair/rich framing)
   {
     const pe = c.valuation.trailingPE, peg = c.valuation.pegRatio;
-    let label = "No data", t = "na", why = "Ã¢â‚¬â€";
+    let label = "No data", t = "na", why = "—";
     if (pe != null && pe > 0) {
       if (pe <= 18 && (peg == null || peg <= 1.5)) { label = "Attractive"; t = "strong"; }
       else if (pe <= 30) { label = "Fair"; t = "good"; }
@@ -1190,7 +1190,7 @@ function computeRisk(d) {
   const health = {
     weight: 35,
     items: [
-      itm("Piotroski F-Score", fs && fs.total != null ? `${fs.total}/9` : "Ã¢â‚¬â€", fs ? scM(fs.total, 0, 9) : null),
+      itm("Piotroski F-Score", fs && fs.total != null ? `${fs.total}/9` : "—", fs ? scM(fs.total, 0, 9) : null),
       itm("Net debt / EBITDA", netDebtEbitdaStr(h.netDebtToEbitda), scM(h.netDebtToEbitda, 5, 0)),
       itm("Current ratio", plain(h.currentRatio,2), scM(h.currentRatio, 0.7, 2.5)),
       itm("Interest coverage", coverageStr(ic), scM(ic, 1, 12)),
@@ -1208,7 +1208,7 @@ function computeRisk(d) {
       itm("Revenue CAGR", pct(cagr(ts,"revenue")), scM(cagr(ts,"revenue"), -0.05, 0.2)),
       itm("Operating margin", pct(pr.operatingMargin), scM(pr.operatingMargin, -0.05, 0.25)),
       itm("Return on equity", pct(pr.returnOnEquity), scM(pr.returnOnEquity, -0.05, 0.25)),
-      itm("Net-margin trend", nmDelta == null ? "Ã¢â‚¬â€" : (nmDelta>=0?"+":"")+pct(nmDelta,1), scM(nmDelta, -0.05, 0.05)),
+      itm("Net-margin trend", nmDelta == null ? "—" : (nmDelta>=0?"+":"")+pct(nmDelta,1), scM(nmDelta, -0.05, 0.05)),
     ],
   };
   valuation.score = avgScore(valuation.items);
@@ -1232,16 +1232,16 @@ function buildCatalystsRisks(d) {
   const gmFirst = firstVal(ts,"grossMargin"), gmLast = lastVal(ts,"grossMargin");
 
   // risks
-  if (ndeb != null && ndeb > 3) risks.push({ txt: `Elevated leverage Ã¢â‚¬â€ net debt is ${ndeb.toFixed(1)}Ãƒâ€” EBITDA`, c: ndeb > 4.5 ? "high":"med", t: ndeb>4.5?"HIGH":"MEDIUM" });
-  if (fcf != null && fcf < 0) risks.push({ txt: "Negative free cash flow Ã¢â‚¬â€ the business is consuming cash", c:"high", t:"HIGH" });
+  if (ndeb != null && ndeb > 3) risks.push({ txt: `Elevated leverage — net debt is ${ndeb.toFixed(1)}× EBITDA`, c: ndeb > 4.5 ? "high":"med", t: ndeb>4.5?"HIGH":"MEDIUM" });
+  if (fcf != null && fcf < 0) risks.push({ txt: "Negative free cash flow — the business is consuming cash", c:"high", t:"HIGH" });
   if (rg != null && rg < 0) risks.push({ txt: `Revenue contracting year over year (${pct(rg)})`, c:"high", t:"HIGH" });
-  if (ic != null && ic < 3) risks.push({ txt: `Thin interest coverage (${ic.toFixed(1)}Ãƒâ€”) leaves little cushion`, c: ic<1.5?"high":"med", t: ic<1.5?"HIGH":"MEDIUM" });
+  if (ic != null && ic < 3) risks.push({ txt: `Thin interest coverage (${ic.toFixed(1)}×) leaves little cushion`, c: ic<1.5?"high":"med", t: ic<1.5?"HIGH":"MEDIUM" });
   if (pe != null && pe > 40) risks.push({ txt: `Rich valuation (P/E ${pe.toFixed(0)}) prices in strong growth`, c:"med", t:"MEDIUM" });
   if (fs && fs.total != null && fs.total < 4) risks.push({ txt: `Weak Piotroski trend (${fs.total}/9)`, c:"high", t:"HIGH" });
   if (nm != null && nm < 0.03) risks.push({ txt: `Slim net margins (${pct(nm)})`, c:"med", t:"MEDIUM" });
   if (c.dividend.payoutRatio != null && c.dividend.payoutRatio > 0.9) risks.push({ txt: "Dividend payout above 90% looks stretched", c:"med", t:"MEDIUM" });
   const dn = daysUntil(d.events && d.events.nextEarningsDate);
-  if (dn != null && dn >= 0 && dn <= 14) risks.push({ txt: `Earnings due in ${dn} day${dn===1?"":"s"} Ã¢â‚¬â€ expect volatility`, c:"med", t:"MEDIUM" });
+  if (dn != null && dn >= 0 && dn <= 14) risks.push({ txt: `Earnings due in ${dn} day${dn===1?"":"s"} — expect volatility`, c:"med", t:"MEDIUM" });
   if (!risks.length) risks.push({ txt: "No major fundamental red flags in the available data", c:"low", t:"LOW" });
 
   // catalysts
@@ -1308,7 +1308,7 @@ function sectorRow(d) {
     }
     return `<div class="rp-sector-row">
       <span class="m">${r.m}</span>
-      <span class="val">${r.co==null?"Ã¢â‚¬â€":r.fmt(r.co)}</span>
+      <span class="val">${r.co==null?"—":r.fmt(r.co)}</span>
       <span class="val" style="color:var(--rmuted)">${r.fmt(r.med)}</span>
       ${tag}</div>`;
   }).join("");
@@ -1327,7 +1327,7 @@ function breakdownBars(risk) {
     const s = p.score;
     return `<div class="rp-bd-row">
       <div class="rp-bd-top"><div class="bl">${label}<span>${p.weight}% weight</span></div>
-      <div class="bv" style="color:${scoreColor(s)}">${s==null?"Ã¢â‚¬â€":s+"/100"}</div></div>
+      <div class="bv" style="color:${scoreColor(s)}">${s==null?"—":s+"/100"}</div></div>
       <div class="rp-bd-track"><div class="rp-bd-fill" style="width:${s==null?0:s}%;background:${scoreColor(s)}"></div></div>
     </div>`;
   }).join("")}</div>`;
@@ -1350,7 +1350,7 @@ function quarterTable(tsQ, cur) {
     const last = [...vals].reverse().find(v=>v!=null);
     let cls = "";
     if (first != null && last != null && first !== last) cls = last > first ? "improving" : "declining";
-    const cells = vals.map(v=>`<td>${v==null?"Ã¢â‚¬â€":r.fmt(v)}</td>`).join("");
+    const cells = vals.map(v=>`<td>${v==null?"—":r.fmt(v)}</td>`).join("");
     return `<tr class="${cls}"><td>${r.label}</td>${cells}</tr>`;
   }).join("");
   return `<div class="rp-tablewrap"><table class="rp-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
@@ -1358,7 +1358,7 @@ function quarterTable(tsQ, cur) {
 
 function earningsCards(d) {
   const e = d.earnings || {};
-  const eps = v => v == null ? "Ã¢â‚¬â€" : `$${v.toFixed(2)}`;
+  const eps = v => v == null ? "—" : `$${v.toFixed(2)}`;
   const beat = e.epsActual != null && e.epsEstimate != null ? e.epsActual >= e.epsEstimate : null;
   // Compute surprise directly (Yahoo's surprisePercent scaling is inconsistent).
   const surprise = (e.epsActual != null && e.epsEstimate != null && e.epsEstimate !== 0)
@@ -1367,8 +1367,8 @@ function earningsCards(d) {
   return `<div class="rp-earn">
     <div class="e"><div class="k">Last EPS (actual)</div><div class="v" style="color:${beat===true?"var(--green)":beat===false?"var(--red)":"var(--rink)"}">${eps(e.epsActual)}</div></div>
     <div class="e"><div class="k">EPS estimate</div><div class="v">${eps(e.epsEstimate)}</div></div>
-    <div class="e"><div class="k">Surprise</div><div class="v" style="color:${surprise>0?"var(--green)":surprise<0?"var(--red)":"var(--rink)"}">${surprise==null?"Ã¢â‚¬â€":(surprise>0?"+":"")+pct(surprise,1)}</div></div>
-    <div class="e"><div class="k">Next report</div><div class="v" style="font-size:17px">${fmtDate(e.nextEarningsDate)||"Ã¢â‚¬â€"}</div><div class="k" style="margin-top:4px">${dn!=null?countdownText(dn):""}</div></div>
+    <div class="e"><div class="k">Surprise</div><div class="v" style="color:${surprise>0?"var(--green)":surprise<0?"var(--red)":"var(--rink)"}">${surprise==null?"—":(surprise>0?"+":"")+pct(surprise,1)}</div></div>
+    <div class="e"><div class="k">Next report</div><div class="v" style="font-size:17px">${fmtDate(e.nextEarningsDate)||"—"}</div><div class="k" style="margin-top:4px">${dn!=null?countdownText(dn):""}</div></div>
   </div>`;
 }
 
@@ -1376,8 +1376,8 @@ function catalystRiskCols(cr) {
   const col = (items, cls) => items.map(i =>
     `<div class="rp-item"><span class="txt">${escapeHtml(i.txt)}</span><span class="rp-sev ${i.c}">${i.t}</span></div>`).join("");
   return `<div class="rp-cr">
-    <div class="rp-col cat"><h4>Ã¢â€“Â² Catalysts</h4>${col(cr.catalysts)}</div>
-    <div class="rp-col risk"><h4>Ã¢â€“Â¼ Risks</h4>${col(cr.risks)}</div>
+    <div class="rp-col cat"><h4>▲ Catalysts</h4>${col(cr.catalysts)}</div>
+    <div class="rp-col risk"><h4>▼ Risks</h4>${col(cr.risks)}</div>
   </div>`;
 }
 
@@ -1405,7 +1405,7 @@ function reportShell(d, risk, prices) {
       <span class="tk">${escapeHtml(p.symbol)}</span>
       <span class="co">${escapeHtml(p.name)}</span>
       <span class="right">
-        <span class="score" style="color:${b.color}">${risk.overall==null?"Ã¢â‚¬â€":risk.overall}<span>/100</span></span>
+        <span class="score" style="color:${b.color}">${risk.overall==null?"—":risk.overall}<span>/100</span></span>
         <span class="rp-badge" style="background:${b.bg};color:${b.color}">${b.text}</span>
       </span>
     </div>
@@ -1444,9 +1444,9 @@ function reportShell(d, risk, prices) {
     ${breakdownBars(risk)}
 
     <div class="rp-explain">
-      <details><summary>New to this? What the risk score means</summary><div class="ex-body">The score runs 0Ã¢â‚¬â€œ100, where higher means lower fundamental risk for a long-term holder. It blends three pillars: how cheap the stock is (valuation), how sturdy the balance sheet and cash flows are (financial health), and how fast and profitably the business is growing. It is a screen to guide research, not a buy/sell signal.</div></details>
-      <details><summary>What is a P/E ratio?</summary><div class="ex-body">Price-to-earnings is the share price divided by earnings per share Ã¢â‚¬â€ roughly how many years of current profit you pay for one share. Lower can mean cheaper, but a low P/E can also signal the market expects trouble. Compare within the same industry.</div></details>
-      <details><summary>What is the F-Score?</summary><div class="ex-body">The Piotroski F-Score (0Ã¢â‚¬â€œ9) checks nine yes/no signals of improving profitability, leverage, and efficiency year over year. 7Ã¢â‚¬â€œ9 is strong, 0Ã¢â‚¬â€œ3 is weak. It rewards businesses that are getting healthier.</div></details>
+      <details><summary>New to this? What the risk score means</summary><div class="ex-body">The score runs 0–100, where higher means lower fundamental risk for a long-term holder. It blends three pillars: how cheap the stock is (valuation), how sturdy the balance sheet and cash flows are (financial health), and how fast and profitably the business is growing. It is a screen to guide research, not a buy/sell signal.</div></details>
+      <details><summary>What is a P/E ratio?</summary><div class="ex-body">Price-to-earnings is the share price divided by earnings per share — roughly how many years of current profit you pay for one share. Lower can mean cheaper, but a low P/E can also signal the market expects trouble. Compare within the same industry.</div></details>
+      <details><summary>What is the F-Score?</summary><div class="ex-body">The Piotroski F-Score (0–9) checks nine yes/no signals of improving profitability, leverage, and efficiency year over year. 7–9 is strong, 0–3 is weak. It rewards businesses that are getting healthier.</div></details>
     </div>
   </div>`;
 
@@ -1473,12 +1473,12 @@ function reportShell(d, risk, prices) {
   return `<div class="rp-bar">
     <span class="brand">Risk Report</span>
     <span class="rp-tabs">
-      <button class="rp-tab active" data-tab="1">Page 1 Ã‚Â· Snapshot</button>
-      <button class="rp-tab" data-tab="2">Page 2 Ã‚Â· Trends</button>
+      <button class="rp-tab active" data-tab="1">Page 1 · Snapshot</button>
+      <button class="rp-tab" data-tab="2">Page 2 · Trends</button>
     </span>
     <span class="rp-actions">
       <button class="rp-btn" id="rp-export">Copy to clipboard</button>
-      <button class="rp-btn" id="rp-close">Close Ã¢Å“â€¢</button>
+      <button class="rp-btn" id="rp-close">Close ✕</button>
     </span>
   </div>
   <div class="rp-body">${page1}${page2}</div>`;
@@ -1489,11 +1489,11 @@ function reportPlainText(d, risk) {
   const cr = buildCatalystsRisks(d);
   const P = risk.pillars;
   const L = [];
-  L.push(`RISK REPORT Ã¢â‚¬â€ ${p.symbol} (${p.name})`);
-  L.push(`Overall: ${risk.overall==null?"n/a":risk.overall+"/100"} Ã¢â‚¬â€ ${risk.badge.text}`);
-  L.push(`Valuation ${P.valuation.score ?? "n/a"}/100 Ã‚Â· Financial health ${P.health.score ?? "n/a"}/100 Ã‚Â· Growth ${P.growth.score ?? "n/a"}/100`);
+  L.push(`RISK REPORT — ${p.symbol} (${p.name})`);
+  L.push(`Overall: ${risk.overall==null?"n/a":risk.overall+"/100"} — ${risk.badge.text}`);
+  L.push(`Valuation ${P.valuation.score ?? "n/a"}/100 · Financial health ${P.health.score ?? "n/a"}/100 · Growth ${P.growth.score ?? "n/a"}/100`);
   L.push("");
-  L.push(`Price ${money(p.price,p.currency)} Ã‚Â· Mkt cap ${money(p.marketCap,p.currency)} Ã‚Â· P/E ${plain(c.valuation.trailingPE,1)} Ã‚Â· Net margin ${pct(c.profitability.netMargin)} Ã‚Â· Rev growth ${pct(c.growth.revenueGrowthYoY)} Ã‚Â· FCF yield ${pct(c.valuation.fcfYield,1)}`);
+  L.push(`Price ${money(p.price,p.currency)} · Mkt cap ${money(p.marketCap,p.currency)} · P/E ${plain(c.valuation.trailingPE,1)} · Net margin ${pct(c.profitability.netMargin)} · Rev growth ${pct(c.growth.revenueGrowthYoY)} · FCF yield ${pct(c.valuation.fcfYield,1)}`);
   L.push("");
   L.push("CATALYSTS:");
   cr.catalysts.forEach(i => L.push(`  + [${i.t}] ${i.txt}`));
@@ -1511,7 +1511,7 @@ async function openReport() {
   const el = document.getElementById("report");
   el.hidden = false;
   document.body.style.overflow = "hidden";
-  el.innerHTML = `<div style="text-align:center;padding:100px 20px;color:var(--rmuted);font-family:var(--rsans)">Building risk reportÃ¢â‚¬Â¦</div>`;
+  el.innerHTML = `<div style="text-align:center;padding:100px 20px;color:var(--rmuted);font-family:var(--rsans)">Building risk report…</div>`;
   let prices = [];
   try {
     const r = await fetch(`${API_BASE}/prices/${encodeURIComponent(currentSymbol)}`, { cache: "no-store" });
@@ -1547,7 +1547,7 @@ async function openReport() {
         ta.remove();
       } catch { ok = false; }
     }
-    showReportToast(ok ? "Report copied to clipboard" : "Copy failed Ã¢â‚¬â€ select and copy manually");
+    showReportToast(ok ? "Report copied to clipboard" : "Copy failed — select and copy manually");
   });
 }
 function closeReport() {
