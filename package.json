@@ -1,0 +1,22 @@
+{
+  "name": "stock-dashboard",
+  "version": "1.0.0",
+  "description": "",
+  "main": "stock-dashboard-server.js",
+  "scripts": {
+    "start": "node stock-dashboard-server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "yahoo-finance2": "^3.15.4"
+  }
+}
