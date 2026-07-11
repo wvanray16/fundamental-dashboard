@@ -17,6 +17,7 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import YahooFinance from "yahoo-finance2";
 
@@ -45,6 +46,94 @@ let SEC_TICKERS = null; // cached { TICKER: cik10 }
 
 const app = express();
 app.use(cors()); // allow the local HTML file / any localhost origin to fetch
+app.use(express.json()); // parse JSON bodies (used by POST /login)
+
+// ---- shared login gate -----------------------------------------------------
+// One shared password for all students. The password is NEVER stored in this
+// (public) repo — it's read from the APP_PASSWORD env var (set in Render). If
+// APP_PASSWORD is unset the gate is disabled, so local dev stays open.
+const GATE_PASSWORD = (process.env.APP_PASSWORD || "").trim();
+// Unforgeable cookie value derived from the password. A visitor can't produce
+// it without knowing the password, so a stolen/guessed cookie isn't possible.
+const AUTH_TOKEN = GATE_PASSWORD
+  ? crypto.createHash("sha256").update("fund-gate:" + GATE_PASSWORD).digest("hex")
+  : "";
+function safeEq(a, b) {
+  const ab = Buffer.from(String(a)), bb = Buffer.from(String(b));
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+function isAuthed(req) {
+  const m = (req.headers.cookie || "").match(/(?:^|;\s*)auth=([^;]+)/);
+  return !!m && safeEq(decodeURIComponent(m[1]), AUTH_TOKEN);
+}
+
+const LOGIN_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fundamentals — Sign in</title>
+<style>
+  :root{--bg:#0E1418;--panel:#151C22;--line:#26323B;--ink:#E7EDF0;--muted:#8496A2;--accent:#6FB5D9}
+  *{box-sizing:border-box}
+  body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);
+    color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif}
+  .card{width:min(360px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:30px 28px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .wm{font-family:"IBM Plex Mono",ui-monospace,monospace;font-weight:600;font-size:15px;margin-bottom:4px}
+  .wm b{color:var(--accent)}
+  h1{font-size:15px;font-weight:500;color:var(--muted);margin:0 0 22px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:7px}
+  input{width:100%;padding:12px 13px;border-radius:9px;border:1px solid var(--line);background:#0E1418;
+    color:var(--ink);font-size:15px;font-family:"IBM Plex Mono",ui-monospace,monospace;outline:none}
+  input:focus{border-color:var(--accent)}
+  button{width:100%;margin-top:16px;padding:12px;border:0;border-radius:9px;background:var(--accent);
+    color:#08121a;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit}
+  .err{color:#E08262;font-size:13px;margin-top:12px;min-height:16px}
+</style></head><body>
+  <form class="card" id="f">
+    <div class="wm"><b>FUND</b>·AMENTALS</div>
+    <h1>Enter the class password to continue</h1>
+    <label for="p">Password</label>
+    <input id="p" type="password" autocomplete="current-password" autofocus>
+    <button type="submit">Enter</button>
+    <div class="err" id="e"></div>
+  </form>
+  <script>
+    var f=document.getElementById("f"),e=document.getElementById("e");
+    f.addEventListener("submit",async function(ev){
+      ev.preventDefault(); e.textContent="";
+      try{
+        var r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({password:document.getElementById("p").value})});
+        if(r.ok){location.href="/";} else{e.textContent="Incorrect password. Try again.";}
+      }catch(_){e.textContent="Something went wrong. Try again.";}
+    });
+  </script>
+</body></html>`;
+
+// Block everything until the visitor has the cookie. HTML page-loads get the
+// login screen; data/asset requests get a 401.
+app.use((req, res, next) => {
+  if (!GATE_PASSWORD) return next();                               // gate disabled
+  if (req.method === "POST" && req.path === "/login") return next(); // allow login attempt
+  if (req.path === "/health") return next();                       // keep health open
+  if (isAuthed(req)) return next();
+  if (req.method === "GET" && (req.headers.accept || "").includes("text/html")) {
+    return res.status(200).type("html").send(LOGIN_PAGE);
+  }
+  return res.status(401).json({ error: "Login required." });
+});
+
+app.post("/login", (req, res) => {
+  const pw = req.body && typeof req.body.password === "string" ? req.body.password : "";
+  if (GATE_PASSWORD && safeEq(pw, GATE_PASSWORD)) {
+    res.setHeader(
+      "Set-Cookie",
+      `auth=${AUTH_TOKEN}; Path=/; Max-Age=${30 * 24 * 3600}; HttpOnly; SameSite=Lax`
+    );
+    return res.json({ ok: true });
+  }
+  return res.status(401).json({ error: "Incorrect password." });
+});
+
 // serve the dashboard HTML + assets from this folder. index:false so "/" falls
 // through to the route below (which serves stock-dashboard.html, not index.html).
 app.use(express.static(APP_DIR, { index: false }));
@@ -775,5 +864,6 @@ app.listen(PORT, () => {
   console.log(`\n  Fundamentals data server running`);
   console.log(`  → http://localhost:${PORT}`);
   console.log(`  Health check: http://localhost:${PORT}/health`);
+  console.log(`  Login gate: ${GATE_PASSWORD ? "ON" : "OFF (set APP_PASSWORD to enable)"}`);
   console.log(`  Now open stock-dashboard.html in your browser.\n`);
 });
