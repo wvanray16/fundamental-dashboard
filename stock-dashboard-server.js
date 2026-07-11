@@ -17,7 +17,10 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import { fileURLToPath } from "url";
 import YahooFinance from "yahoo-finance2";
+
+const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = process.env.PORT || 5233;
 
@@ -44,7 +47,7 @@ const app = express();
 app.use(cors()); // allow the local HTML file / any localhost origin to fetch
 // serve the dashboard HTML + assets from this folder. index:false so "/" falls
 // through to the route below (which serves stock-dashboard.html, not index.html).
-app.use(express.static(".", { index: false }));
+app.use(express.static(APP_DIR, { index: false }));
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -404,7 +407,8 @@ async function getPeers(symbol) {
 
 // ---- core fetch + normalize ------------------------------------------------
 
-async function getFundamentals(symbol) {
+async function getFundamentals(symbol, opts = {}) {
+  const lite = !!opts.lite; // screener mode: skip news/peers/RPO/quarterly for speed
   const modules = [
     "price",
     "summaryDetail",
@@ -417,11 +421,12 @@ async function getFundamentals(symbol) {
   ];
 
   // Kick off news in parallel so it doesn't add to the fundamentals latency.
-  const newsPromise = getNews(symbol);
-  const annualPromise = getTimeSeries(symbol, "annual");
-  const quarterlyPromise = getTimeSeries(symbol, "quarterly");
-  const rpoPromise = withTimeout(getRpo(symbol), 6000).catch(() => null);
-  const peersPromise = getPeers(symbol);
+  // In lite (screener) mode we skip everything the risk score doesn't need.
+  const newsPromise = lite ? Promise.resolve([]) : getNews(symbol);
+  const annualPromise = getTimeSeries(symbol, "annual"); // needed for score
+  const quarterlyPromise = lite ? Promise.resolve([]) : getTimeSeries(symbol, "quarterly");
+  const rpoPromise = lite ? Promise.resolve(null) : withTimeout(getRpo(symbol), 6000).catch(() => null);
+  const peersPromise = lite ? Promise.resolve([]) : getPeers(symbol);
 
   // validateResult:false keeps fields that aren't in the strict schema
   // (important — historical balance-sheet / cash-flow line items live there).
@@ -631,8 +636,140 @@ app.get("/prices/:ticker", async (req, res) => {
   }
 });
 
+// ---- Risk-Report score (server port of computeRisk() in the dashboard) ------
+// Mirrors the exact 0-100 score shown on the page so the screener ranks by the
+// same number. Keep the scM thresholds in sync with stock-dashboard.html.
+const _scM = (v, lo, hi) =>
+  v == null ? null : Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+const _avg = (arr) => {
+  const s = arr.filter((x) => x != null);
+  return s.length ? Math.round(s.reduce((a, b) => a + b, 0) / s.length) : null;
+};
+const _lastVal = (ts, k) => { for (let i = ts.length - 1; i >= 0; i--) if (ts[i][k] != null) return ts[i][k]; return null; };
+const _firstVal = (ts, k) => { for (let i = 0; i < ts.length; i++) if (ts[i][k] != null) return ts[i][k]; return null; };
+function _cagr(ts, k) {
+  const rows = ts.filter((r) => r[k] != null && r[k] > 0);
+  if (rows.length < 2) return null;
+  const yrs = rows[rows.length - 1].year - rows[0].year;
+  if (yrs <= 0) return null;
+  return Math.pow(rows[rows.length - 1][k] / rows[0][k], 1 / yrs) - 1;
+}
+function riskScore(d) {
+  const c = d.current, ts = d.timeSeries || [], fs = d.fScore;
+  const v = c.valuation, h = c.balanceSheet, pr = c.profitability, g = c.growth;
+  const valuation = _avg([
+    _scM(v.trailingPE, 45, 10), _scM(v.forwardPE, 40, 9), _scM(v.pegRatio, 3.5, 0.8),
+    _scM(v.priceToSales, 12, 1), _scM(v.enterpriseToEbitda, 25, 6), _scM(v.fcfYield, 0, 0.08),
+  ]);
+  const ic = _lastVal(ts, "interestCoverage");
+  const fcf = c.cashFlow.freeCashFlow, ni = c.cashFlow.netIncomeToCommon;
+  const fq = fcf != null && ni != null && ni > 0 ? fcf / ni : null;
+  const health = _avg([
+    fs && fs.total != null ? _scM(fs.total, 0, 9) : null,
+    _scM(h.netDebtToEbitda, 5, 0), _scM(h.currentRatio, 0.7, 2.5),
+    _scM(ic, 1, 12), _scM(pr.netMargin, -0.05, 0.25), _scM(fq, 0, 1.2),
+  ]);
+  const nmF = _firstVal(ts, "netMargin"), nmL = _lastVal(ts, "netMargin");
+  const nmDelta = nmF != null && nmL != null ? nmL - nmF : null;
+  const growth = _avg([
+    _scM(g.revenueGrowthYoY, -0.1, 0.25), _scM(g.earningsGrowthYoY, -0.2, 0.3),
+    _scM(_cagr(ts, "revenue"), -0.05, 0.2), _scM(pr.operatingMargin, -0.05, 0.25),
+    _scM(pr.returnOnEquity, -0.05, 0.25), _scM(nmDelta, -0.05, 0.05),
+  ]);
+  const parts = [[valuation, 35], [health, 35], [growth, 30]].filter((p) => p[0] != null);
+  const wsum = parts.reduce((a, p) => a + p[1], 0);
+  const overall = wsum ? Math.round(parts.reduce((a, p) => a + p[0] * p[1], 0) / wsum) : null;
+  return { overall, valuation, health, growth };
+}
+function riskBadgeText(o) {
+  if (o == null) return "NO SCORE";
+  if (o >= 75) return "LOW RISK";
+  if (o >= 60) return "MODERATE";
+  if (o >= 45) return "ELEVATED";
+  return "HIGH RISK";
+}
+
+// ---- Nasdaq-100 screener ----------------------------------------------------
+// Editable list of the ~100 Nasdaq-100 constituents. Bad/renamed symbols just
+// get skipped, so an out-of-date entry won't break the scan.
+const NASDAQ_100 = [
+  "AAPL","MSFT","AMZN","NVDA","GOOGL","GOOG","META","AVGO","TSLA","COST",
+  "NFLX","TMUS","ASML","CSCO","ADBE","AMD","PEP","LIN","AZN","INTU",
+  "TXN","ISRG","QCOM","BKNG","AMGN","HON","CMCSA","AMAT","PANW","ADP",
+  "GILD","VRTX","MU","ADI","SBUX","MELI","REGN","LRCX","INTC","KLAC",
+  "MDLZ","SNPS","CDNS","PYPL","CRWD","MAR","CTAS","ORLY","ABNB","CEG",
+  "PDD","MRVL","FTNT","DASH","ADSK","WDAY","NXPI","ROP","CHTR","AEP",
+  "PCAR","MNST","PAYX","CPRT","ROST","KDP","FANG","ODFL","BKR","EA",
+  "VRSK","EXC","CSGP","XEL","CCEP","DDOG","IDXX","TTWO","GEHC","ON",
+  "TEAM","GFS","DXCM","BIIB","WBD","MDB","ZS","TTD","ARM","LULU",
+  "MRNA","APP","PLTR","MSTR","AXON","KHC","CDW","FAST","CTSH","TER",
+];
+const SCREEN_TTL_MS = 6 * 60 * 60 * 1000; // reuse a completed scan for 6 hours
+const SCREEN_CONCURRENCY = 5;             // parallel Yahoo pulls (gentle on rate limits)
+const screen = { status: "idle", done: 0, total: 0, results: [], computedAt: 0, error: null };
+
+async function runScreen() {
+  if (screen.status === "running") return;
+  screen.status = "running";
+  screen.done = 0;
+  screen.total = NASDAQ_100.length;
+  screen.error = null;
+  const out = [];
+  let i = 0;
+  async function worker() {
+    while (i < NASDAQ_100.length) {
+      const sym = NASDAQ_100[i++];
+      try {
+        const d = await withTimeout(getFundamentals(sym, { lite: true }), 20000);
+        const r = riskScore(d);
+        if (r.overall != null) {
+          out.push({
+            symbol: sym,
+            name: d.profile.name || sym,
+            price: d.profile.price,
+            score: r.overall,
+            badge: riskBadgeText(r.overall),
+            pe: d.current.valuation.trailingPE,
+            revGrowth: d.current.growth.revenueGrowthYoY,
+            fscore: d.fScore ? d.fScore.total : null,
+          });
+        }
+      } catch {
+        // skip individual failures — a partial screen is still useful
+      }
+      screen.done++;
+    }
+  }
+  await Promise.all(Array.from({ length: SCREEN_CONCURRENCY }, worker));
+  out.sort((a, b) => b.score - a.score);
+  screen.results = out;      // only swap in the fresh list once the scan finishes
+  screen.computedAt = Date.now();
+  screen.status = "ready";
+}
+
+// Returns the cached screen instantly; kicks off a background scan when stale
+// or when ?refresh=1 is passed. The page polls this and shows a progress bar.
+app.get("/screen", (req, res) => {
+  const fresh = screen.computedAt && Date.now() - screen.computedAt < SCREEN_TTL_MS;
+  const force = req.query.refresh === "1";
+  if (screen.status !== "running" && (force || !fresh)) {
+    runScreen().catch((e) => {
+      screen.error = String(e && e.message ? e.message : e);
+      screen.status = "ready";
+    });
+  }
+  res.json({
+    status: screen.status,
+    progress: { done: screen.done, total: screen.total },
+    computedAt: screen.computedAt || null,
+    universe: "Nasdaq 100",
+    count: screen.results.length,
+    results: screen.results,
+  });
+});
+
 // Serve the dashboard itself at the root so one deployment = one URL.
-app.get("/", (_req, res) => res.sendFile(path.resolve("stock-dashboard.html")));
+app.get("/", (_req, res) => res.sendFile(path.join(APP_DIR, "stock-dashboard.html")));
 
 app.listen(PORT, () => {
   console.log(`\n  Fundamentals data server running`);

@@ -470,6 +470,7 @@
         <button id="go">Analyze</button>
       </div>
       <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">checking server…</span></div>
+      <button id="btnScreener" class="report-btn">Screener</button>
       <button id="report-btn" class="report-btn" disabled>Risk Report</button>
     </div>
   </div>
@@ -1573,6 +1574,184 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
   const fromHash = decodeURIComponent(location.hash.replace("#","")).trim();
   if (fromHash) { document.getElementById("ticker").value = fromHash; if (up) analyze(fromHash); }
   else if (up) { document.getElementById("ticker").value = "AAPL"; analyze("AAPL"); }
+})();
+</script>
+
+<!-- ===================== Nasdaq-100 Screener ===================== -->
+<div id="scrOverlay" class="scr-overlay" hidden>
+  <div class="scr-modal">
+    <div class="scr-head">
+      <div>
+        <h2>Nasdaq-100 Screener</h2>
+        <div class="scr-sub">Top 10 by Risk Report score (70+) · <span id="scrAsOf">—</span></div>
+      </div>
+      <div class="scr-actions">
+        <button id="scrRefresh" class="scr-btn">Refresh</button>
+        <button id="scrClose" class="scr-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div id="scrProgress" class="scr-progress" hidden>
+      <div class="scr-progress-label" id="scrProgressLabel">Scoring…</div>
+      <div class="scr-progress-track"><div id="scrProgressBar" class="scr-progress-bar"></div></div>
+      <div class="scr-progress-note">First scan after the server wakes takes a moment; results are cached after that.</div>
+    </div>
+    <div id="scrBody" class="scr-body"></div>
+    <div class="scr-foot" id="scrFoot"></div>
+  </div>
+</div>
+
+<style>
+.scr-overlay[hidden]{display:none !important}
+.scr-overlay{position:fixed;inset:0;background:rgba(6,10,13,.72);backdrop-filter:blur(2px);
+  display:flex;align-items:flex-start;justify-content:center;z-index:1000;padding:40px 16px;overflow:auto;
+  font-family:var(--sans)}
+.scr-modal{background:var(--panel);color:var(--ink);width:min(940px,100%);border:1px solid var(--line);
+  border-radius:var(--radius);box-shadow:0 24px 70px rgba(0,0,0,.55);padding:22px 24px 18px}
+.scr-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
+.scr-head h2{margin:0;font-size:20px;font-weight:600;letter-spacing:.01em}
+.scr-sub{color:var(--muted);font-size:12.5px;margin-top:4px}
+.scr-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.scr-btn{font-family:var(--sans);font-weight:600;font-size:13px;color:var(--ink);background:var(--panel-2);
+  border:1px solid var(--line);border-radius:8px;padding:7px 14px;cursor:pointer}
+.scr-btn:hover{border-color:var(--accent);color:var(--accent)}
+.scr-btn:disabled{opacity:.5;cursor:default}
+.scr-close{border:1px solid var(--line);background:var(--panel-2);color:var(--muted);border-radius:8px;
+  width:34px;height:34px;cursor:pointer;font-size:14px}
+.scr-close:hover{color:var(--ink);border-color:var(--accent)}
+.scr-progress{margin:6px 0 18px}
+.scr-progress-label{font-family:var(--mono);font-size:13px;color:var(--muted);margin-bottom:8px}
+.scr-progress-track{height:8px;border-radius:5px;background:var(--panel-2);overflow:hidden}
+.scr-progress-bar{height:100%;width:0;background:var(--accent);transition:width .3s ease}
+.scr-progress-note{font-size:11.5px;color:var(--faint);margin-top:8px}
+.scr-table-wrap{overflow-x:auto}
+.scr-table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
+.scr-table th{text-align:right;color:var(--faint);font-weight:600;font-size:11px;letter-spacing:.06em;
+  text-transform:uppercase;padding:0 10px 10px;border-bottom:1px solid var(--line)}
+.scr-table th.l,.scr-table td.l{text-align:left}
+.scr-table td{text-align:right;padding:11px 10px;border-bottom:1px solid var(--line);font-family:var(--mono)}
+.scr-table tbody tr{cursor:pointer}
+.scr-table tbody tr:hover{background:var(--accent-dim)}
+.scr-rank{color:var(--faint)}
+.scr-tk{font-weight:700;color:var(--ink)}
+.scr-co{font-family:var(--sans);color:var(--muted);font-size:12px;font-weight:400}
+.scr-score{font-weight:700;font-size:15px}
+.scr-badge{font-family:var(--sans);font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  padding:3px 9px;border-radius:20px;white-space:nowrap}
+.scr-empty{color:var(--muted);font-size:14px;padding:30px 4px;text-align:center;line-height:1.5}
+.scr-foot{color:var(--faint);font-size:11.5px;margin-top:14px}
+</style>
+
+<script>
+(function () {
+  const API = (typeof API_BASE !== "undefined") ? API_BASE : location.origin;
+  const overlay = document.getElementById("scrOverlay");
+  const $ = (id) => document.getElementById(id);
+  let polling = false, timer = null;
+
+  const fmtPE = (v) => (v == null ? "—" : v.toFixed(1));
+  const fmtPct = (v) => (v == null ? "—" : (v >= 0 ? "+" : "") + (v * 100).toFixed(0) + "%");
+  const scoreColor = (s) => (s >= 75 ? "var(--pos)" : s >= 60 ? "var(--warn)" : "var(--neg)");
+  const badgeStyle = (s) => {
+    if (s >= 75) return "color:var(--pos);background:rgba(85,185,138,.15)";
+    if (s >= 60) return "color:var(--warn);background:rgba(217,178,90,.15)";
+    return "color:var(--neg);background:rgba(224,130,98,.15)";
+  };
+
+  function open() {
+    overlay.hidden = false;
+    poll(false);
+  }
+  function close() {
+    overlay.hidden = true;
+    polling = false;
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  async function poll(force) {
+    polling = true;
+    try {
+      const r = await fetch(API + "/screen" + (force ? "?refresh=1" : ""), { cache: "no-store" });
+      const data = await r.json();
+      render(data);
+      if (data.status === "running") {
+        timer = setTimeout(() => poll(false), 2500); // keep polling while it scans
+      } else {
+        polling = false;
+      }
+    } catch (e) {
+      $("scrBody").innerHTML = '<div class="scr-empty">Could not reach the screener. Try Refresh in a moment.</div>';
+      $("scrProgress").hidden = true;
+      polling = false;
+    }
+  }
+
+  function render(data) {
+    const running = data.status === "running";
+    const prog = $("scrProgress");
+    if (running) {
+      prog.hidden = false;
+      const { done, total } = data.progress || { done: 0, total: 100 };
+      $("scrProgressLabel").textContent = "Scoring " + done + " / " + total + " Nasdaq-100 names…";
+      $("scrProgressBar").style.width = total ? (done / total * 100).toFixed(0) + "%" : "0%";
+    } else {
+      prog.hidden = true;
+    }
+
+    $("scrAsOf").textContent = data.computedAt
+      ? "as of " + new Date(data.computedAt).toLocaleString()
+      : (running ? "scanning…" : "—");
+    $("scrRefresh").disabled = running;
+
+    const qualifying = (data.results || []).filter((x) => x.score >= 70);
+    const top = qualifying.slice(0, 10);
+
+    if (!top.length) {
+      $("scrBody").innerHTML = running && !(data.results || []).length
+        ? '<div class="scr-empty">Running the first scan… the ranked list will appear here.</div>'
+        : '<div class="scr-empty">No Nasdaq-100 names currently score 70 or higher.</div>';
+      $("scrFoot").textContent = data.count ? data.count + " of 100 names scored." : "";
+      return;
+    }
+
+    const rows = top.map((x, i) => `
+      <tr data-sym="${x.symbol}">
+        <td class="l scr-rank">${i + 1}</td>
+        <td class="l"><span class="scr-tk">${x.symbol}</span> <span class="scr-co">${(x.name || "").replace(/</g, "")}</span></td>
+        <td class="scr-score" style="color:${scoreColor(x.score)}">${x.score}</td>
+        <td><span class="scr-badge" style="${badgeStyle(x.score)}">${x.badge}</span></td>
+        <td>${x.price == null ? "—" : "$" + x.price.toFixed(2)}</td>
+        <td>${fmtPE(x.pe)}</td>
+        <td style="color:${x.revGrowth != null && x.revGrowth < 0 ? "var(--neg)" : "var(--ink)"}">${fmtPct(x.revGrowth)}</td>
+        <td>${x.fscore == null ? "—" : x.fscore + "/9"}</td>
+      </tr>`).join("");
+
+    $("scrBody").innerHTML = `<div class="scr-table-wrap"><table class="scr-table">
+      <thead><tr>
+        <th class="l">#</th><th class="l">Company</th><th>Score</th><th class="l">Risk</th>
+        <th>Price</th><th>P/E</th><th>Rev YoY</th><th>F-Score</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
+
+    $("scrFoot").textContent =
+      qualifying.length + " names scored 70+ (showing top " + top.length + ") · " +
+      (data.count || 0) + " of 100 scored · Risk Report score, 15-min delayed data.";
+
+    // click a row to open that ticker's full report
+    $("scrBody").querySelectorAll("tr[data-sym]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const sym = tr.getAttribute("data-sym");
+        const inp = document.getElementById("ticker");
+        if (inp) inp.value = sym;
+        close();
+        if (typeof analyze === "function") analyze(sym);
+      });
+    });
+  }
+
+  $("btnScreener").addEventListener("click", open);
+  $("scrClose").addEventListener("click", close);
+  $("scrRefresh").addEventListener("click", () => { if (!$("scrRefresh").disabled) poll(true); });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) close(); });
 })();
 </script>
 </body>
