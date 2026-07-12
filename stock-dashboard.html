@@ -832,8 +832,8 @@ function tile(label, val, cls = "") {
 function chartCard(id, title, note, toggle = false) {
   const seg = toggle
     ? `<span class="seg" data-chart="${id}">
-         <button data-period="annual" class="active">Annual</button>
-         <button data-period="quarterly">Quarterly</button>
+         <button data-period="annual">Annual</button>
+         <button data-period="quarterly" class="active">Quarterly</button>
        </span>`
     : "";
   return `<div class="chartcard">
@@ -985,7 +985,8 @@ function barChart(id, ts, seriesDefs, { axis = "raw", cur = "USD" } = {}) {
 // Charts that support an Annual / Quarterly toggle.
 function setupToggleableChart(id, annual, quarterly, seriesDefs, opts) {
   toggleCfg[id] = { annual, quarterly, seriesDefs, opts };
-  renderToggleable(id, "annual");
+  // Default to Quarterly; fall back to Annual only when no quarterly data exists.
+  renderToggleable(id, (quarterly && quarterly.length) ? "quarterly" : "annual");
   const seg = document.querySelector(`.seg[data-chart="${id}"]`);
   if (seg) {
     seg.querySelectorAll("button").forEach(btn => {
