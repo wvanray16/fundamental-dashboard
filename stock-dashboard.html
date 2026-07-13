@@ -292,6 +292,21 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .reveal { animation: rise .4s ease both; }
+  .peer-wrap { overflow-x: auto; margin-top: 2px; }
+  .peer-table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 640px; }
+  .peer-table th { text-align: right; color: var(--faint); font-weight: 600; font-size: 11px;
+    letter-spacing: 0.05em; text-transform: uppercase; padding: 0 12px 10px; border-bottom: 1px solid var(--line); }
+  .peer-table th.l, .peer-table td.l { text-align: left; }
+  .peer-table td { text-align: right; padding: 11px 12px; border-bottom: 1px solid var(--line); font-family: var(--mono); }
+  .peer-table tbody tr { cursor: pointer; }
+  .peer-table tbody tr:hover { background: var(--accent-dim); }
+  .peer-tk { font-weight: 700; color: var(--ink); }
+  .peer-co { font-family: var(--sans); color: var(--muted); font-size: 12.5px; }
+  .peer-table tr.peer-cur { background: var(--accent-dim); }
+  .peer-table tr.peer-cur .peer-tk { color: var(--accent); }
+  .peer-badge { margin-left: 8px; font-family: var(--sans); font-size: 9.5px; font-weight: 700;
+    letter-spacing: 0.05em; color: var(--accent); border: 1px solid var(--accent); border-radius: 10px;
+    padding: 1px 6px; vertical-align: middle; }
   @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
   @media (max-width: 720px) {
@@ -812,6 +827,10 @@ function render(d) {
     ],
     charts: [],
   }));
+
+  // Peer comparison (related companies from Yahoo). Skip if none were returned.
+  const peers = d.peers || [];
+  if (peers.length > 1) S.appendChild(peersBlock(peers, cur));
 }
 
 // ---------- section / tile builders ----------
@@ -824,6 +843,44 @@ function sectionBlock({ title, note, tiles, charts }) {
     <div class="block-head"><h3>${title}</h3><span class="note">${note}</span></div>
     <div class="tiles">${tiles.join("")}</div>
     ${chartsHtml}`;
+  return el;
+}
+
+// Peer comparison table: the current company plus related names from Yahoo.
+function peersBlock(peers, cur) {
+  const rows = peers.map((p) => {
+    const chg = p.changePct;
+    const chgStr = chg == null ? "—" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%";
+    const chgColor = chg == null ? "var(--muted)" : (chg < 0 ? "var(--neg)" : "var(--pos)");
+    return `<tr class="${p.isCurrent ? "peer-cur" : ""}" data-sym="${escapeHtml(p.symbol)}">
+      <td class="l"><span class="peer-tk">${escapeHtml(p.symbol)}</span>${p.isCurrent ? '<span class="peer-badge">THIS</span>' : ""}</td>
+      <td class="l peer-co">${escapeHtml(p.name || "")}</td>
+      <td>${money(p.price, cur)}</td>
+      <td style="color:${chgColor}">${chgStr}</td>
+      <td>${money(p.marketCap, cur)}</td>
+      <td>${plain(p.trailingPE, 1)}</td>
+      <td>${plain(p.forwardPE, 1)}</td>
+      <td>${plain(p.priceToBook, 2)}</td>
+      <td>${p.divYield == null ? "—" : pct(p.divYield, 2)}</td>
+    </tr>`;
+  }).join("");
+  const el = document.createElement("section");
+  el.className = "block reveal";
+  el.innerHTML = `
+    <div class="block-head"><h3>Peer Comparison</h3><span class="note">${escapeHtml(peers[0] ? peers[0].symbol : "")} vs. related companies · click a row to open it</span></div>
+    <div class="peer-wrap"><table class="peer-table"><thead><tr>
+      <th class="l">Ticker</th><th class="l">Company</th><th>Price</th><th>Chg</th>
+      <th>Mkt cap</th><th>P/E</th><th>Fwd P/E</th><th>P/B</th><th>Div yield</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+  el.querySelectorAll("tr[data-sym]").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const sym = tr.getAttribute("data-sym");
+      const inp = document.getElementById("ticker");
+      if (inp) inp.value = sym;
+      if (typeof analyze === "function") analyze(sym);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
   return el;
 }
 // Plain-English definitions shown on hover. Keys must match the tile() label exactly.
