@@ -730,6 +730,9 @@ function render(d) {
   setupToggleableChart("revTrend", ts, tsQ, [ series("Revenue", "revenue", "var-accent") ], { axis: "money", cur });
   setupToggleableChart("niTrend", ts, tsQ, [ series("Net income", "netIncome", "signed") ], { axis: "money", cur });
 
+  // Remaining Performance Obligations — only for companies that disclose it (SEC).
+  if (d.rpo && d.rpo.disclosed && d.rpo.latest) S.appendChild(rpoBlock(d.rpo));
+
   // 3. CASH FLOW QUALITY
   S.appendChild(sectionBlock({
     title: "Cash Flow Quality",
@@ -883,6 +886,23 @@ function peersBlock(peers, cur) {
   });
   return el;
 }
+
+// Remaining Performance Obligations (RPO): total contracted future revenue, split
+// into deferred revenue (already invoiced) and unbilled backlog. SEC data is USD.
+function rpoBlock(rpo) {
+  const asOf = rpo.latest && rpo.latest.end ? fmtDate(rpo.latest.end) : null;
+  return sectionBlock({
+    title: "Remaining Performance Obligations (RPO)",
+    note: "Contracted future revenue not yet recognized" + (asOf ? " · as of " + asOf : ""),
+    tiles: [
+      tile("Total RPO", money(rpo.latest ? rpo.latest.val : null, "USD")),
+      tile("Deferred revenue (invoiced backlog)", money(rpo.deferred, "USD")),
+      tile("Unbilled backlog", money(rpo.unbilled, "USD")),
+      tile("RPO growth (YoY)", pct(rpo.growthYoY), tone(rpo.growthYoY, { good: .15, ok: .05 })),
+    ],
+    charts: [],
+  });
+}
 // Plain-English definitions shown on hover. Keys must match the tile() label exactly.
 const TIP = {
   "Gross margin": "Revenue left after the direct cost of making the product (COGS), as a % of sales. Higher signals pricing power.",
@@ -930,6 +950,10 @@ const TIP = {
   "Revenue CAGR": "Compound annual growth rate of revenue — the smoothed average yearly growth across the available history.",
   "Piotroski F-Score": "A 0–9 checklist of fundamental health across profitability, leverage and efficiency. 7–9 is strong, 0–3 is weak.",
   "Net-margin trend": "Whether net margin is widening or narrowing versus the earliest year on record — a read on improving or eroding profitability.",
+  "Total RPO": "Total dollar value of signed contracts not yet recognized as revenue — future revenue the company has already booked.",
+  "Deferred revenue (invoiced backlog)": "The part of RPO already invoiced or collected (a contract liability on the balance sheet) but not yet recognized as revenue.",
+  "Unbilled backlog": "The part of RPO under contract but not yet invoiced — total RPO minus deferred revenue.",
+  "RPO growth (YoY)": "Growth in total RPO versus a year earlier. Rising backlog signals future revenue momentum.",
 };
 
 function tile(label, val, cls = "") {

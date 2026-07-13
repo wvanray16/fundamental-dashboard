@@ -381,20 +381,15 @@ async function loadSecTickers() {
   return map;
 }
 
-// RPO is a point-in-time balance (an XBRL "instant"), reported in 10-K/10-Q notes
-// under us-gaap:RevenueRemainingPerformanceObligation.
-async function getRpo(ticker) {
-  const map = await loadSecTickers();
-  const cik = map[ticker];
-  if (!cik) return { supported: false, disclosed: false };
-
-  const url = `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/us-gaap/RevenueRemainingPerformanceObligation.json`;
+// Fetch one us-gaap concept from SEC and return its USD facts as points sorted
+// by period-end. Returns [] when the company doesn't report the concept (404).
+async function secConceptPoints(cik, concept) {
+  const url = `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/us-gaap/${concept}.json`;
   const r = await fetch(url, { headers: { "User-Agent": SEC_UA, "Accept-Encoding": "gzip, deflate" } });
-  if (r.status === 404) return { supported: true, disclosed: false, cik };
-  if (!r.ok) throw new Error(`SEC concept ${r.status}`);
+  if (r.status === 404) return [];
+  if (!r.ok) throw new Error(`SEC concept ${concept} ${r.status}`);
   const j = await r.json();
   const usd = (j.units && j.units.USD) || [];
-
   // Group facts by period-end. For each end date, prefer the latest-filed value,
   // and among ties take the largest (the consolidated total vs. any dimensional part).
   const groups = new Map();
@@ -408,11 +403,47 @@ async function getRpo(ticker) {
     const cand = arr.filter((x) => x.filed === latestFiled);
     return cand.reduce((m, x) => (m == null || x.val > m.val ? x : m), null);
   };
-  const all = [...groups.entries()]
-    .map(([end, arr]) => { const f = pick(arr); return { end, val: f.val, fy: f.fy, fp: f.fp, form: f.form }; })
+  return [...groups.entries()]
+    .map(([end, arr]) => { const f = pick(arr); return { end, val: f.val, fy: f.fy, fp: f.fp, form: f.form, label: j.label || null }; })
     .sort((a, b) => (a.end < b.end ? -1 : 1));
+}
 
-  if (all.length === 0) return { supported: true, disclosed: false, cik };
+// Value of a points series at (or within ~45 days of) a target period-end.
+function valAtEnd(points, endISO) {
+  if (!points || !points.length) return null;
+  const exact = points.find((p) => p.end === endISO);
+  if (exact) return exact.val;
+  let best = null, bd = Infinity;
+  const t = new Date(endISO);
+  for (const p of points) {
+    const d = Math.abs(new Date(p.end) - t);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best && bd < 45 * 86400000 ? best.val : null;
+}
+
+// RPO changes only quarterly, and each lookup makes several SEC requests — cache
+// results so repeat/concurrent views don't hammer SEC (which rate-limits by IP).
+const rpoCache = new Map(); // ticker -> { data, ts }
+const RPO_TTL_MS = 6 * 60 * 60 * 1000;
+async function getRpoCached(ticker) {
+  const hit = rpoCache.get(ticker);
+  if (hit && Date.now() - hit.ts < RPO_TTL_MS) return hit.data;
+  const data = await getRpo(ticker);
+  rpoCache.set(ticker, { data, ts: Date.now() }); // cache successes only (throws bypass this)
+  return data;
+}
+
+// RPO is a point-in-time balance (an XBRL "instant"), reported in 10-K/10-Q notes
+// under us-gaap:RevenueRemainingPerformanceObligation. We also split it into the
+// deferred-revenue (already invoiced) portion and the unbilled backlog.
+async function getRpo(ticker) {
+  const map = await loadSecTickers();
+  const cik = map[ticker];
+  if (!cik) return { supported: false, disclosed: false };
+
+  const all = await secConceptPoints(cik, "RevenueRemainingPerformanceObligation");
+  if (!all.length) return { supported: true, disclosed: false, cik };
 
   // Annual-preferred series for the chart (fiscal year-end points), deduped by year.
   let annual = all.filter((p) => p.form === "10-K" || p.fp === "FY");
@@ -439,14 +470,43 @@ async function getRpo(ticker) {
     growthYoY = (latest.val - best.val) / best.val;
   }
 
+  // Split total RPO into: deferred revenue (already invoiced = a contract
+  // liability on the balance sheet) and unbilled backlog (contracted but not
+  // yet invoiced) = RPO − deferred. Try the modern ASC 606 tags first, then
+  // fall back to the legacy DeferredRevenue tag.
+  let deferred = null, unbilled = null;
+  try {
+    const [clTotal, clCur, clNon, drLegacy] = await Promise.all([
+      secConceptPoints(cik, "ContractWithCustomerLiability").catch(() => []),
+      secConceptPoints(cik, "ContractWithCustomerLiabilityCurrent").catch(() => []),
+      secConceptPoints(cik, "ContractWithCustomerLiabilityNoncurrent").catch(() => []),
+      secConceptPoints(cik, "DeferredRevenue").catch(() => []),
+    ]);
+    const end = latest.end;
+    deferred = valAtEnd(clTotal, end);
+    if (deferred == null) {
+      const c = valAtEnd(clCur, end), n = valAtEnd(clNon, end);
+      if (c != null || n != null) deferred = (c || 0) + (n || 0);
+    }
+    if (deferred == null) deferred = valAtEnd(drLegacy, end);
+  } catch { deferred = null; }
+
+  if (deferred != null && latest.val != null) {
+    // Guard against a reporting mismatch where deferred exceeds total RPO.
+    if (deferred <= latest.val * 1.02) unbilled = Math.max(latest.val - deferred, 0);
+    else deferred = null;
+  }
+
   return {
     supported: true,
     disclosed: true,
     cik,
-    label: j.label || null,
+    label: latest.label || null,
     latest: { end: latest.end, val: latest.val },
     priorYear: priorYear ? { end: priorYear.end, val: priorYear.val } : null,
     growthYoY,
+    deferred,
+    unbilled,
     annual,
   };
 }
@@ -514,7 +574,7 @@ async function getFundamentals(symbol, opts = {}) {
   const newsPromise = lite ? Promise.resolve([]) : getNews(symbol);
   const annualPromise = getTimeSeries(symbol, "annual"); // needed for score
   const quarterlyPromise = lite ? Promise.resolve([]) : getTimeSeries(symbol, "quarterly");
-  const rpoPromise = lite ? Promise.resolve(null) : withTimeout(getRpo(symbol), 6000).catch(() => null);
+  const rpoPromise = lite ? Promise.resolve(null) : withTimeout(getRpoCached(symbol), 9000).catch(() => null);
   const peersPromise = lite ? Promise.resolve([]) : getPeers(symbol);
 
   // validateResult:false keeps fields that aren't in the strict schema
