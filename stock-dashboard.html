@@ -865,6 +865,13 @@ const TIP = {
   "Payout ratio": "The slice of earnings paid out as dividends. Very high (above ~90%) can be hard to sustain.",
   "5-yr avg yield": "The stock's average dividend yield over the past five years — context for whether today's yield is high or low.",
   "Ex-dividend date": "Own the stock before this date to receive the next dividend; buy on or after and the seller keeps it.",
+  // Risk Report pillar labels (some are worded differently from the tiles above).
+  "P/E (trailing)": "Share price ÷ earnings over the last 12 months. What you pay for each $1 of recent profit.",
+  "P/E (forward)": "Share price ÷ expected earnings for the year ahead. Below the trailing P/E implies analysts expect growth.",
+  "FCF / net income": "How much of reported profit turns into real free cash. Near or above 1.0 points to high-quality earnings.",
+  "Revenue CAGR": "Compound annual growth rate of revenue — the smoothed average yearly growth across the available history.",
+  "Piotroski F-Score": "A 0–9 checklist of fundamental health across profitability, leverage and efficiency. 7–9 is strong, 0–3 is weak.",
+  "Net-margin trend": "Whether net margin is widening or narrowing versus the earliest year on record — a read on improving or eroding profitability.",
 };
 
 function tile(label, val, cls = "") {
@@ -1331,7 +1338,10 @@ function priceChartSVG(prices) {
 function cardsGrid(items) {
   return `<div class="rp-cards">${items.map(i => {
     const tag = tagFor(i.score);
-    return `<div class="rp-card"><div class="k">${i.label}</div>
+    const tip = TIP[i.label];
+    const tipAttr = tip ? ` data-tip="${escapeHtml(tip)}"` : "";
+    const cue = tip ? `<span class="tip-i" aria-hidden="true">i</span>` : "";
+    return `<div class="rp-card${tip ? " has-tip" : ""}"${tipAttr}><div class="k">${i.label}${cue}</div>
       <div class="v">${i.value}</div>
       <span class="rp-tag ${tag.c}">${tag.t}</span></div>`;
   }).join("")}</div>`;
@@ -1803,12 +1813,15 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
 
 <!-- ===================== Metric hover tooltips ===================== -->
 <style>
-.tile.has-tip{cursor:help}
-.tile .tip-i{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;
+.has-tip{cursor:help}
+.tip-i{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;
   margin-left:6px;border:1px solid var(--line);border-radius:50%;font-size:9px;font-style:italic;
   font-weight:700;color:var(--faint);vertical-align:middle;line-height:1;font-family:var(--sans);
   transition:color .15s,border-color .15s}
-.tile.has-tip:hover .tip-i{color:var(--accent);border-color:var(--accent)}
+.has-tip:hover .tip-i{color:var(--accent);border-color:var(--accent)}
+/* Risk Report cards use the report's own palette */
+.rp-card .tip-i{border-color:var(--rline);color:var(--rfaint)}
+.rp-card.has-tip:hover .tip-i{color:var(--rink);border-color:var(--rmuted)}
 #gtip{position:fixed;z-index:2000;max-width:262px;background:var(--panel-2);color:var(--ink);
   border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-family:var(--sans);
   font-size:12.5px;line-height:1.45;box-shadow:0 12px 32px rgba(0,0,0,.5);
@@ -1836,7 +1849,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
   function hide() { if (cur) { cur = null; gtip.classList.remove("on"); } }
 
   document.addEventListener("mouseover", (e) => {
-    const el = e.target.closest ? e.target.closest(".tile[data-tip]") : null;
+    const el = e.target.closest ? e.target.closest(".tile[data-tip], .rp-card[data-tip]") : null;
     if (!el || el === cur) return;
     cur = el;
     gtip.textContent = el.getAttribute("data-tip"); // decoded text; textContent = safe
