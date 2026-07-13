@@ -778,9 +778,9 @@ function riskBadgeText(o) {
   return "HIGH RISK";
 }
 
-// ---- Nasdaq-100 screener ----------------------------------------------------
-// Editable list of the ~100 Nasdaq-100 constituents. Bad/renamed symbols just
-// get skipped, so an out-of-date entry won't break the scan.
+// ---- screeners (Nasdaq 100 + S&P 100) --------------------------------------
+// Editable ticker lists. Bad/renamed symbols just get skipped, so an
+// out-of-date entry won't break the scan.
 const NASDAQ_100 = [
   "AAPL","MSFT","AMZN","NVDA","GOOGL","GOOG","META","AVGO","TSLA","COST",
   "NFLX","TMUS","ASML","CSCO","ADBE","AMD","PEP","LIN","AZN","INTU",
@@ -793,21 +793,44 @@ const NASDAQ_100 = [
   "TEAM","GFS","DXCM","BIIB","WBD","MDB","ZS","TTD","ARM","LULU",
   "MRNA","APP","PLTR","MSTR","AXON","KHC","CDW","FAST","CTSH","TER",
 ];
+const SP_100 = [
+  "AAPL","ABBV","ABT","ACN","ADBE","AIG","AMD","AMGN","AMT","AMZN",
+  "AVGO","AXP","BA","BAC","BK","BKNG","BLK","BMY","BRK-B","C",
+  "CAT","CHTR","CL","CMCSA","COF","COP","COST","CRM","CSCO","CVS",
+  "CVX","DE","DHR","DIS","DUK","EMR","F","FDX","GD","GE",
+  "GILD","GM","GOOG","GOOGL","GS","HD","HON","IBM","INTC","INTU",
+  "JNJ","JPM","KO","LIN","LLY","LMT","LOW","MA","MCD","MDLZ",
+  "MDT","MET","META","MMM","MO","MRK","MS","MSFT","NEE","NFLX",
+  "NKE","NVDA","ORCL","PEP","PFE","PG","PM","PYPL","QCOM","RTX",
+  "SBUX","SCHW","SO","T","TGT","TMO","TMUS","TSLA","TXN","UNH",
+  "UNP","UPS","USB","V","VZ","WFC","WMT","XOM",
+];
+const UNIVERSES = {
+  nasdaq100: { label: "Nasdaq 100", tickers: NASDAQ_100 },
+  sp100: { label: "S&P 100", tickers: SP_100 },
+};
+
 const SCREEN_TTL_MS = 6 * 60 * 60 * 1000; // reuse a completed scan for 6 hours
 const SCREEN_CONCURRENCY = 5;             // parallel Yahoo pulls (gentle on rate limits)
-const screen = { status: "idle", done: 0, total: 0, results: [], computedAt: 0, error: null };
+// One independent cache/state per universe.
+const screens = {};
+for (const id of Object.keys(UNIVERSES)) {
+  screens[id] = { status: "idle", done: 0, total: 0, results: [], computedAt: 0, error: null };
+}
 
-async function runScreen() {
-  if (screen.status === "running") return;
-  screen.status = "running";
-  screen.done = 0;
-  screen.total = NASDAQ_100.length;
-  screen.error = null;
+async function runScreen(uid) {
+  const uni = UNIVERSES[uid];
+  const st = screens[uid];
+  if (!uni || st.status === "running") return;
+  st.status = "running";
+  st.done = 0;
+  st.total = uni.tickers.length;
+  st.error = null;
   const out = [];
   let i = 0;
   async function worker() {
-    while (i < NASDAQ_100.length) {
-      const sym = NASDAQ_100[i++];
+    while (i < uni.tickers.length) {
+      const sym = uni.tickers[i++];
       try {
         const d = await withTimeout(getFundamentals(sym, { lite: true }), 20000);
         const r = riskScore(d);
@@ -826,34 +849,39 @@ async function runScreen() {
       } catch {
         // skip individual failures — a partial screen is still useful
       }
-      screen.done++;
+      st.done++;
     }
   }
   await Promise.all(Array.from({ length: SCREEN_CONCURRENCY }, worker));
   out.sort((a, b) => b.score - a.score);
-  screen.results = out;      // only swap in the fresh list once the scan finishes
-  screen.computedAt = Date.now();
-  screen.status = "ready";
+  st.results = out;      // only swap in the fresh list once the scan finishes
+  st.computedAt = Date.now();
+  st.status = "ready";
 }
 
 // Returns the cached screen instantly; kicks off a background scan when stale
-// or when ?refresh=1 is passed. The page polls this and shows a progress bar.
+// or when ?refresh=1 is passed. ?u=nasdaq100|sp100 picks the universe (default
+// nasdaq100). The page polls this and shows a progress bar.
 app.get("/screen", (req, res) => {
-  const fresh = screen.computedAt && Date.now() - screen.computedAt < SCREEN_TTL_MS;
+  const uid = UNIVERSES[req.query.u] ? req.query.u : "nasdaq100";
+  const uni = UNIVERSES[uid];
+  const st = screens[uid];
+  const fresh = st.computedAt && Date.now() - st.computedAt < SCREEN_TTL_MS;
   const force = req.query.refresh === "1";
-  if (screen.status !== "running" && (force || !fresh)) {
-    runScreen().catch((e) => {
-      screen.error = String(e && e.message ? e.message : e);
-      screen.status = "ready";
+  if (st.status !== "running" && (force || !fresh)) {
+    runScreen(uid).catch((e) => {
+      st.error = String(e && e.message ? e.message : e);
+      st.status = "ready";
     });
   }
   res.json({
-    status: screen.status,
-    progress: { done: screen.done, total: screen.total },
-    computedAt: screen.computedAt || null,
-    universe: "Nasdaq 100",
-    count: screen.results.length,
-    results: screen.results,
+    status: st.status,
+    progress: { done: st.done, total: st.total },
+    computedAt: st.computedAt || null,
+    universe: uni.label,
+    total: uni.tickers.length,
+    count: st.results.length,
+    results: st.results,
   });
 });
 

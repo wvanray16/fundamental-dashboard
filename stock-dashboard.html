@@ -471,6 +471,7 @@
       </div>
       <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">checking server…</span></div>
       <button id="btnScreener" class="report-btn">Screener Nasdaq 100</button>
+      <button id="btnScreenerSP" class="report-btn">Screener S&amp;P 100</button>
       <button id="report-btn" class="report-btn" disabled>Risk Report</button>
     </div>
   </div>
@@ -1638,7 +1639,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
   <div class="scr-modal">
     <div class="scr-head">
       <div>
-        <h2>Nasdaq-100 Screener</h2>
+        <h2 id="scrTitle">Nasdaq-100 Screener</h2>
         <div class="scr-sub">Top 10 by Risk Report score (70+) · <span id="scrAsOf">—</span></div>
       </div>
       <div class="scr-actions">
@@ -1702,7 +1703,11 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
   const API = (typeof API_BASE !== "undefined") ? API_BASE : location.origin;
   const overlay = document.getElementById("scrOverlay");
   const $ = (id) => document.getElementById(id);
-  let polling = false, timer = null;
+  let polling = false, timer = null, currentU = "nasdaq100";
+  const UNI = {
+    nasdaq100: { title: "Nasdaq-100 Screener", name: "Nasdaq-100" },
+    sp100: { title: "S&P 100 Screener", name: "S&P 100" },
+  };
 
   const fmtPE = (v) => (v == null ? "—" : v.toFixed(1));
   const fmtPct = (v) => (v == null ? "—" : (v >= 0 ? "+" : "") + (v * 100).toFixed(0) + "%");
@@ -1713,7 +1718,10 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
     return "color:var(--neg);background:rgba(224,130,98,.15)";
   };
 
-  function open() {
+  function open(uid) {
+    currentU = UNI[uid] ? uid : "nasdaq100";
+    $("scrTitle").textContent = UNI[currentU].title;
+    if (timer) { clearTimeout(timer); timer = null; }
     overlay.hidden = false;
     poll(false);
   }
@@ -1724,10 +1732,12 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
   }
 
   async function poll(force) {
+    const u = currentU;
     polling = true;
     try {
-      const r = await fetch(API + "/screen" + (force ? "?refresh=1" : ""), { cache: "no-store" });
+      const r = await fetch(API + "/screen?u=" + u + (force ? "&refresh=1" : ""), { cache: "no-store" });
       const data = await r.json();
+      if (u !== currentU) return; // universe switched mid-request — ignore stale result
       render(data);
       if (data.status === "running") {
         timer = setTimeout(() => poll(false), 2500); // keep polling while it scans
@@ -1735,6 +1745,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
         polling = false;
       }
     } catch (e) {
+      if (u !== currentU) return;
       $("scrBody").innerHTML = '<div class="scr-empty">Could not reach the screener. Try Refresh in a moment.</div>';
       $("scrProgress").hidden = true;
       polling = false;
@@ -1747,7 +1758,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
     if (running) {
       prog.hidden = false;
       const { done, total } = data.progress || { done: 0, total: 100 };
-      $("scrProgressLabel").textContent = "Scoring " + done + " / " + total + " Nasdaq-100 names…";
+      $("scrProgressLabel").textContent = "Scoring " + done + " / " + total + " " + UNI[currentU].name + " names…";
       $("scrProgressBar").style.width = total ? (done / total * 100).toFixed(0) + "%" : "0%";
     } else {
       prog.hidden = true;
@@ -1764,8 +1775,8 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
     if (!top.length) {
       $("scrBody").innerHTML = running && !(data.results || []).length
         ? '<div class="scr-empty">Running the first scan… the ranked list will appear here.</div>'
-        : '<div class="scr-empty">No Nasdaq-100 names currently score 70 or higher.</div>';
-      $("scrFoot").textContent = data.count ? data.count + " of 100 names scored." : "";
+        : '<div class="scr-empty">No ' + UNI[currentU].name + ' names currently score 70 or higher.</div>';
+      $("scrFoot").textContent = data.count ? data.count + " of " + (data.total || "?") + " names scored." : "";
       return;
     }
 
@@ -1789,7 +1800,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
 
     $("scrFoot").textContent =
       qualifying.length + " names scored 70+ (showing top " + top.length + ") · " +
-      (data.count || 0) + " of 100 scored · Risk Report score, 15-min delayed data.";
+      (data.count || 0) + " of " + (data.total || "?") + " scored · Risk Report score, 15-min delayed data.";
 
     // click a row to open that ticker's full report
     $("scrBody").querySelectorAll("tr[data-sym]").forEach((tr) => {
@@ -1803,7 +1814,8 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
     });
   }
 
-  $("btnScreener").addEventListener("click", open);
+  $("btnScreener").addEventListener("click", () => open("nasdaq100"));
+  $("btnScreenerSP").addEventListener("click", () => open("sp100"));
   $("scrClose").addEventListener("click", close);
   $("scrRefresh").addEventListener("click", () => { if (!$("scrRefresh").disabled) poll(true); });
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
