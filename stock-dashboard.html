@@ -1697,7 +1697,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
     <div class="scr-head">
       <div>
         <h2 id="scrTitle">Nasdaq-100 Screener</h2>
-        <div class="scr-sub">Top 10 by Risk Report score (70+) · <span id="scrAsOf">—</span></div>
+        <div class="scr-sub">Top 20 by Risk Report score (70+) · <span id="scrAsOf">—</span></div>
       </div>
       <div class="scr-actions">
         <button id="scrRefresh" class="scr-btn">Refresh</button>
@@ -1827,7 +1827,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
     $("scrRefresh").disabled = running;
 
     const qualifying = (data.results || []).filter((x) => x.score >= 70);
-    const top = qualifying.slice(0, 10);
+    const top = qualifying.slice(0, 20);
 
     if (!top.length) {
       $("scrBody").innerHTML = running && !(data.results || []).length
