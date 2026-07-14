@@ -1721,7 +1721,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
     <div class="scr-head">
       <div>
         <h2 id="scrTitle">Nasdaq-100 Screener</h2>
-        <div class="scr-sub">Top 20 by Risk Report score (70+) · <span id="scrAsOf">—</span></div>
+        <div class="scr-sub">Top 10 by Risk Report score (75+) · <span id="scrAsOf">—</span></div>
       </div>
       <div class="scr-actions">
         <button id="scrRefresh" class="scr-btn">Refresh</button>
@@ -1850,13 +1850,13 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
       : (running ? "scanning…" : "—");
     $("scrRefresh").disabled = running;
 
-    const qualifying = (data.results || []).filter((x) => x.score >= 70);
-    const top = qualifying.slice(0, 20);
+    const qualifying = (data.results || []).filter((x) => x.score >= 75);
+    const top = qualifying.slice(0, 10);
 
     if (!top.length) {
       $("scrBody").innerHTML = running && !(data.results || []).length
         ? '<div class="scr-empty">Running the first scan… the ranked list will appear here.</div>'
-        : '<div class="scr-empty">No ' + UNI[currentU].name + ' names currently score 70 or higher.</div>';
+        : '<div class="scr-empty">No ' + UNI[currentU].name + ' names currently score 75 or higher.</div>';
       $("scrFoot").textContent = data.count ? data.count + " of " + (data.total || "?") + " names scored." : "";
       return;
     }
@@ -1880,7 +1880,7 @@ document.getElementById("ticker").addEventListener("keydown", e => { if (e.key =
       </tr></thead><tbody>${rows}</tbody></table></div>`;
 
     $("scrFoot").textContent =
-      qualifying.length + " names scored 70+ (showing top " + top.length + ") · " +
+      qualifying.length + " names scored 75+ (showing top " + top.length + ") · " +
       (data.count || 0) + " of " + (data.total || "?") + " scored · Risk Report score, 15-min delayed data.";
 
     // click a row to open that ticker's full report
