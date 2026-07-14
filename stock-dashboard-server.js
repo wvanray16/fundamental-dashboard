@@ -576,7 +576,9 @@ async function getRpo(ticker) {
     disclosed: true,
     cik,
     label: latest.label || null,
-    latest: { end: latest.end, val: latest.val },
+    // Noon UTC so the page's local-time date formatting shows the true SEC
+    // period-end (a date-only string parses as UTC midnight = a day early out west).
+    latest: { end: new Date(latest.end + "T12:00:00Z").toISOString(), val: latest.val },
     priorYear: priorYear ? { end: priorYear.end, val: priorYear.val } : null,
     growthYoY,
     deferred,
@@ -639,11 +641,15 @@ async function getFundamentals(symbol, opts = {}) {
   const peersPromise = lite ? Promise.resolve([]) : getPeers(symbol);
 
   // Current market data + metrics from Finnhub (parallel).
-  const [quote, prof, metricRes, reco] = await Promise.all([
+  const _day = (d) => d.toISOString().slice(0, 10);
+  const [quote, prof, metricRes, reco, calRes, earnRes] = await Promise.all([
     lite ? Promise.resolve({}) : fh(`/quote?symbol=${symbol}`),   // price: not part of the score
     fh(`/stock/profile2?symbol=${symbol}`, lite),
     fh(`/stock/metric?symbol=${symbol}&metric=all`, lite),
     lite ? Promise.resolve([]) : fh(`/stock/recommendation?symbol=${symbol}`).catch(() => []),
+    lite ? Promise.resolve(null)
+      : fh(`/calendar/earnings?from=${_day(new Date())}&to=${_day(new Date(Date.now() + 150 * 86400000))}&symbol=${symbol}`).catch(() => null),
+    lite ? Promise.resolve(null) : fh(`/stock/earnings?symbol=${symbol}`).catch(() => null),
   ]);
   const m = (metricRes && metricRes.metric) || {};
   const pctd = (v) => (v == null ? null : num(v) / 100); // Finnhub % -> decimal
@@ -688,9 +694,44 @@ async function getFundamentals(symbol, opts = {}) {
       : sell > buy && sell > hold ? "sell" : "hold";
   }
 
-  // Finnhub free tier doesn't include next-earnings date or ex-dividend date.
-  const events = { nextEarningsDate: null, nextEarningsDateEnd: null, earningsDateIsEstimate: false, epsEstimate: null, exDividendDate: null };
-  const earnings = { period: null, quarter: null, epsActual: null, epsEstimate: null, surprisePercent: null, nextEpsEstimate: null, nextEarningsDate: null };
+  // Next earnings date + EPS estimate (Finnhub earnings calendar). Finnhub returns
+  // the window unsorted, so pick the earliest date that isn't in the past.
+  let nextEarningsDate = null, nextEpsEstimate = null;
+  if (calRes && Array.isArray(calRes.earningsCalendar)) {
+    const todayStr = _day(new Date());
+    const upcoming = calRes.earningsCalendar
+      .filter((e) => e && e.date && e.date >= todayStr)
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+    if (upcoming.length) {
+      // Anchor at NOON UTC: the page formats dates in local time, so midnight UTC
+      // would render as the previous day in western timezones.
+      nextEarningsDate = new Date(upcoming[0].date + "T12:00:00Z").toISOString();
+      nextEpsEstimate = num(upcoming[0].epsEstimate);
+    }
+  }
+  const events = {
+    nextEarningsDate,
+    nextEarningsDateEnd: null,
+    earningsDateIsEstimate: false,
+    epsEstimate: nextEpsEstimate,
+    exDividendDate: null, // Finnhub's dividend endpoint is premium
+  };
+
+  // Most recently reported quarter (actual vs estimate) for the report's earnings
+  // card. The page computes the surprise % itself from actual/estimate.
+  const earnHist = Array.isArray(earnRes) ? earnRes.filter((e) => e && e.period) : [];
+  const lastE = earnHist.length
+    ? earnHist.slice().sort((a, b) => (a.period < b.period ? -1 : 1)).pop()
+    : null;
+  const earnings = {
+    period: lastE ? lastE.period : null,
+    quarter: lastE ? new Date(lastE.period + "T12:00:00Z").toISOString() : null,
+    epsActual: lastE ? num(lastE.actual) : null,
+    epsEstimate: lastE ? num(lastE.estimate) : null,
+    surprisePercent: lastE ? num(lastE.surprisePercent) : null,
+    nextEpsEstimate,
+    nextEarningsDate,
+  };
 
   const profile = {
     symbol: (prof && prof.ticker ? prof.ticker : symbol).toUpperCase(),
