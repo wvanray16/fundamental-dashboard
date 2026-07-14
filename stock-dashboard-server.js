@@ -1,44 +1,66 @@
 // stock-dashboard-server.js
-// Local data server for the Fundamentals Dashboard.
-// Pulls fundamentals from Yahoo Finance (via yahoo-finance2 v3) and serves them
-// to the dashboard HTML over localhost with CORS enabled.
+// Data server for the Fundamentals Dashboard. It also serves the dashboard HTML.
 //
-// This exists because a browser cannot call Yahoo Finance directly (CORS +
-// crumb auth). The dashboard calls THIS server instead.
+// Data sources (all cloud-accessible, US-listed companies):
+//   - Finnhub  (free tier, key in FINNHUB_API_KEY): quote, profile, current
+//     metrics/ratios, peers, company news, analyst ratings.
+//   - SEC EDGAR (no key): historical statements, Piotroski F-Score, and RPO.
+// A browser can't call these directly (CORS/keys), so it calls THIS server.
 //
-// Setup (PowerShell, run once in the folder that holds this file):
-//   npm init -y
-//   npm pkg set type=module
-//   npm install express cors yahoo-finance2
-// Run:
-//   node stock-dashboard-server.js
-// Then open stock-dashboard.html in your browser.
+// Run locally:  FINNHUB_API_KEY=... node stock-dashboard-server.js
 
 import express from "express";
 import cors from "cors";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
-import YahooFinance from "yahoo-finance2";
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = process.env.PORT || 5233;
 
-// Pass-through logger that mutes only the (now-irrelevant) "financial statements
-// submodules ... almost no data since Nov 2024" warning. We've already migrated
-// all historical data to fundamentalsTimeSeries, so the notice is just noise.
-const quietLogger = {
-  info: (...a) => console.info(...a),
-  warn: (...a) => {
-    if (typeof a[0] === "string" && a[0].includes("financial statements submodules")) return;
-    console.warn(...a);
-  },
-  error: (...a) => console.error(...a),
-  debug: () => {},
-  dir: (...a) => console.dir(...a),
-};
-const yf = new YahooFinance({ logger: quietLogger, suppressNotices: ["yahooSurvey"] });
+// ---- data sources -----------------------------------------------------------
+// Current market data + metrics: Finnhub (free tier, ~60 calls/min). The key
+// lives in the FINNHUB_API_KEY env var (set in Render) — never in this public
+// repo. Historical statements, Piotroski F-Score, and RPO: SEC EDGAR (no key).
+// Both cover US-listed companies.
+const FINNHUB_KEY = (process.env.FINNHUB_API_KEY || "").trim();
+const FINNHUB = "https://finnhub.io/api/v1";
+// Sliding-window limiter: at most FH_MAX Finnhub calls per trailing 60s (under the
+// 60/min free cap). A single dashboard view (~20 calls) passes straight through;
+// the screener paces itself so no request gets 429'd.
+const FH_TIMES = [];
+const FH_MAX = 55, FH_WIN = 60000;
+let fhInteractiveWaiting = 0;
+function fhTake(bulk) {
+  return new Promise((resolve) => {
+    if (!bulk) fhInteractiveWaiting++;
+    const tick = () => {
+      const now = Date.now();
+      while (FH_TIMES.length && FH_TIMES[0] <= now - FH_WIN) FH_TIMES.shift();
+      // Interactive (single-view) calls take priority; the bulk screener yields
+      // whenever a live lookup is waiting, so student lookups never starve.
+      const allowed = FH_TIMES.length < FH_MAX && (!bulk || fhInteractiveWaiting === 0);
+      if (allowed) {
+        FH_TIMES.push(now);
+        if (!bulk) fhInteractiveWaiting--;
+        resolve();
+      } else {
+        setTimeout(tick, 200);
+      }
+    };
+    tick();
+  });
+}
+async function fh(q, bulk = false) {
+  if (!FINNHUB_KEY) throw new Error("FINNHUB_API_KEY not set");
+  await fhTake(bulk);
+  const sep = q.includes("?") ? "&" : "?";
+  const r = await fetch(`${FINNHUB}${q}${sep}token=${FINNHUB_KEY}`);
+  if (r.status === 429) throw new Error("Finnhub rate limit (429)");
+  if (!r.ok) throw new Error(`Finnhub ${q.split("?")[0]} ${r.status}`);
+  return r.json();
+}
 
 // SEC EDGAR requires a descriptive User-Agent. Set SEC_UA to your email for best compliance.
 const SEC_UA = process.env.SEC_UA || "LakeDillon-StockDashboard/1.0 (contact: contact@lakedilloneyecare.com)";
@@ -186,126 +208,172 @@ function isoDate(v) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-// ---- news --------------------------------------------------------------
+// ---- news (Finnhub company-news) ----------------------------------------
 
-async function getNews(symbol, name) {
+async function getNews(symbol) {
   try {
-    const r = await yf.search(
-      symbol,
-      { newsCount: 12, quotesCount: 0, enableNavLinks: false, enableFuzzyQuery: false },
-      { validateResult: false }
-    );
-    return (r.news || [])
-      .map((n) => {
-        const res = (n.thumbnail && n.thumbnail.resolutions) || [];
-        let thumb = null;
-        if (res.length) {
-          const sorted = [...res].sort((a, b) => (a.width || 0) - (b.width || 0));
-          thumb = (sorted.find((t) => (t.width || 0) >= 140) || sorted[sorted.length - 1]).url;
-        }
-        return {
-          title: n.title,
-          publisher: n.publisher,
-          link: n.link,
-          publishedAt: isoDate(n.providerPublishTime),
-          thumbnail: thumb,
-          relatedTickers: n.relatedTickers || [],
-        };
-      })
-      .filter((n) => n.title && n.link);
+    const to = new Date();
+    const from = new Date(to.getTime() - 30 * 86400000);
+    const day = (d) => d.toISOString().slice(0, 10);
+    const items = await fh(`/company-news?symbol=${symbol}&from=${day(from)}&to=${day(to)}`);
+    return (Array.isArray(items) ? items : [])
+      .filter((n) => n && n.headline && n.url)
+      .slice(0, 12)
+      .map((n) => ({
+        title: n.headline,
+        publisher: n.source || null,
+        link: n.url,
+        publishedAt: n.datetime ? new Date(n.datetime * 1000).toISOString() : null,
+        thumbnail: n.image || null,
+        relatedTickers: n.related ? String(n.related).split(",").filter(Boolean) : [],
+      }));
   } catch {
     return [];
   }
 }
 
-// ---- annual series (via fundamentalsTimeSeries) --------------------------
-// One call feeds both the share-count chart and the Piotroski F-Score.
+// ---- historical statements (SEC EDGAR companyfacts) ----------------------
+// One companyfacts fetch per company feeds every "over time" chart, the
+// share-count history, and the Piotroski F-Score. Cached (statements change
+// only quarterly). US filers only.
+const factsCache = new Map(); // cik10 -> { data, ts }
+async function getCompanyFacts(symbol) {
+  const map = await loadSecTickers();
+  const cik = map[symbol.toUpperCase()];
+  if (!cik) return null;
+  const hit = factsCache.get(cik);
+  if (hit && Date.now() - hit.ts < 6 * 60 * 60 * 1000) return hit.data;
+  const r = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`, {
+    headers: { "User-Agent": SEC_UA, "Accept-Encoding": "gzip, deflate" },
+  });
+  if (!r.ok) throw new Error(`SEC facts ${r.status}`);
+  const data = await r.json();
+  factsCache.set(cik, { data, ts: Date.now() });
+  // Bound memory: companyfacts JSON is large (multi-MB), so keep only a few.
+  while (factsCache.size > 5) factsCache.delete(factsCache.keys().next().value);
+  return data;
+}
 
-// One fundamentalsTimeSeries call builds a rich per-period series (annual or
-// quarterly) that feeds every historical chart, the share-count chart, and the
-// F-Score. Yahoo's quoteSummary statement-history submodules stopped returning
-// data in late 2024, so this is now the sole source for historical statements.
+const _days = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+// First present tag's fact array for a unit.
+function tagUnits(gaap, tags, unit) {
+  for (const t of tags) if (gaap[t] && gaap[t].units[unit]) return gaap[t].units[unit];
+  return [];
+}
+// FLOW concept -> Map(end -> val): periods of a kind (annual ~365d | quarter ~90d),
+// dedup by end-date (latest-filed wins).
+function flowByEnd(gaap, tags, kind, unit = "USD") {
+  const lo = kind === "annual" ? 350 : 80, hi = kind === "annual" ? 380 : 100;
+  const m = new Map();
+  for (const f of tagUnits(gaap, tags, unit)) {
+    if (f.val == null || !f.start || !f.end) continue;
+    const d = _days(f.start, f.end);
+    if (d < lo || d > hi) continue;
+    const prev = m.get(f.end);
+    if (!prev || (f.filed || "") > prev.filed) m.set(f.end, { val: f.val, filed: f.filed || "" });
+  }
+  return new Map([...m].map(([e, o]) => [e, o.val]));
+}
+// INSTANT concept -> Map(end -> val): dedup by end-date (latest-filed wins).
+function instantByEnd(gaap, tags, unit = "USD") {
+  const m = new Map();
+  for (const f of tagUnits(gaap, tags, unit)) {
+    if (f.val == null || !f.end || f.start) continue; // instants have no start
+    const prev = m.get(f.end);
+    if (!prev || (f.filed || "") > prev.filed) m.set(f.end, { val: f.val, filed: f.filed || "" });
+  }
+  return new Map([...m].map(([e, o]) => [e, o.val]));
+}
+
+const SEC_TAGS = {
+  revenue: ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet", "RevenueFromContractWithCustomerIncludingAssessedTax"],
+  grossProfit: ["GrossProfit"],
+  operatingIncome: ["OperatingIncomeLoss"],
+  netIncome: ["NetIncomeLoss", "ProfitLoss"],
+  interestExpense: ["InterestExpense", "InterestExpenseNonoperating", "InterestAndDebtExpense"],
+  pretax: ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
+  tax: ["IncomeTaxExpenseBenefit"],
+  ocf: ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
+  capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
+  equity: ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+  assets: ["Assets"],
+  liabilities: ["Liabilities"],
+  currentAssets: ["AssetsCurrent"],
+  currentLiabilities: ["LiabilitiesCurrent"],
+  ltDebtNon: ["LongTermDebtNoncurrent", "LongTermDebt"],
+  ltDebtCur: ["LongTermDebtCurrent", "DebtCurrent"],
+  sharesFlow: ["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfShareOutstandingBasicAndDiluted", "WeightedAverageNumberOfSharesOutstandingBasic"],
+  sharesInstant: ["CommonStockSharesOutstanding"],
+};
+
+// Build a per-period series (kind = "annual" | "quarter") mirroring the old
+// Yahoo timeSeries row shape so the charts, share history and F-Score work as-is.
+function buildSecSeries(gaap, kind) {
+  const rev = flowByEnd(gaap, SEC_TAGS.revenue, kind);
+  const gp = flowByEnd(gaap, SEC_TAGS.grossProfit, kind);
+  const oi = flowByEnd(gaap, SEC_TAGS.operatingIncome, kind);
+  const ni = flowByEnd(gaap, SEC_TAGS.netIncome, kind);
+  const iexp = flowByEnd(gaap, SEC_TAGS.interestExpense, kind);
+  const pre = flowByEnd(gaap, SEC_TAGS.pretax, kind);
+  const tax = flowByEnd(gaap, SEC_TAGS.tax, kind);
+  const ocf = flowByEnd(gaap, SEC_TAGS.ocf, kind);
+  const capex = flowByEnd(gaap, SEC_TAGS.capex, kind);
+  const shFlow = flowByEnd(gaap, SEC_TAGS.sharesFlow, kind, "shares");
+  const eq = instantByEnd(gaap, SEC_TAGS.equity);
+  const assets = instantByEnd(gaap, SEC_TAGS.assets);
+  const liab = instantByEnd(gaap, SEC_TAGS.liabilities);
+  const ca = instantByEnd(gaap, SEC_TAGS.currentAssets);
+  const cl = instantByEnd(gaap, SEC_TAGS.currentLiabilities);
+  const ltdNon = instantByEnd(gaap, SEC_TAGS.ltDebtNon);
+  const ltdCur = instantByEnd(gaap, SEC_TAGS.ltDebtCur);
+  const shInst = instantByEnd(gaap, SEC_TAGS.sharesInstant, "shares");
+
+  const at = (m, e) => (m.has(e) ? m.get(e) : null);
+  let series = [...rev.keys()].sort().map((end) => {
+    const revenue = at(rev, end);
+    const grossProfit = at(gp, end), operatingIncome = at(oi, end), netIncome = at(ni, end);
+    const ebit = operatingIncome;
+    const interestExpense = at(iexp, end);
+    const pretaxIncome = at(pre, end), taxProvision = at(tax, end);
+    const equity = at(eq, end);
+    const opCashFlow = at(ocf, end), cpx = at(capex, end);
+    const freeCashFlow = opCashFlow != null && cpx != null ? opCashFlow - cpx : null;
+    const dn = at(ltdNon, end), dc = at(ltdCur, end);
+    const totalDebt = dn != null || dc != null ? (dn || 0) + (dc || 0) : null;
+    const taxRate = pretaxIncome && taxProvision != null && pretaxIncome !== 0
+      ? Math.min(Math.max(taxProvision / pretaxIncome, 0), 0.6) : 0.21;
+    const nopat = ebit != null ? ebit * (1 - taxRate) : null;
+    const investedCapital = equity != null || totalDebt != null ? (equity || 0) + (totalDebt || 0) : null;
+    const dt = new Date(end);
+    return {
+      year: dt.getUTCFullYear(),
+      label: kind === "quarter" ? `Q${Math.floor(dt.getUTCMonth() / 3) + 1} '${String(dt.getUTCFullYear()).slice(2)}` : undefined,
+      end,
+      revenue, grossProfit, operatingIncome, netIncome, ebit, interestExpense,
+      grossMargin: safeDiv(grossProfit, revenue),
+      operatingMargin: safeDiv(operatingIncome, revenue),
+      netMargin: safeDiv(netIncome, revenue),
+      interestCoverage: interestExpense && interestExpense !== 0 ? Math.abs(safeDiv(ebit, interestExpense)) : null,
+      totalEquity: equity, totalLiabilities: at(liab, end), totalAssets: at(assets, end), totalDebt,
+      debtToEquity: safeDiv(totalDebt, equity),
+      returnOnEquity: safeDiv(netIncome, equity),
+      operatingCashFlow: opCashFlow, capex: cpx, freeCashFlow,
+      fcfMargin: safeDiv(freeCashFlow, revenue),
+      roic: safeDiv(nopat, investedCapital),
+      currentAssets: at(ca, end), currentLiabilities: at(cl, end),
+      longTermDebt: at(ltdNon, end),
+      shares: at(shFlow, end) ?? at(shInst, end),
+    };
+  });
+  return kind === "quarter" ? series.slice(-8) : series.slice(-6);
+}
 
 async function getTimeSeries(symbol, type) {
   try {
-    const yearsBack = type === "annual" ? 6 : 3;
-    const period1 = `${new Date().getFullYear() - yearsBack}-01-01`;
-    const rows = await yf.fundamentalsTimeSeries(
-      symbol,
-      { period1, type, module: "all" },
-      { validateResult: false }
-    );
-    // The library strips the type prefix and lowercases the first letter in
-    // returned rows (annualTotalRevenue -> totalRevenue), keeping all-caps keys
-    // like EBIT as-is. Mirror that transformation to read the values.
-    const g = (r, name) => {
-      const key = name === name.toUpperCase() ? name : name[0].toLowerCase() + name.slice(1);
-      return num(r[key]);
-    };
-
-    const byEnd = new Map();
-    for (const r of rows || []) {
-      const iso = isoDate(r.date);
-      if (!iso) continue;
-      const dt = new Date(iso);
-      const revenue = g(r, "TotalRevenue");
-      const grossProfit = g(r, "GrossProfit");
-      const operatingIncome = g(r, "OperatingIncome");
-      const netIncome = g(r, "NetIncome");
-      const ebit = g(r, "EBIT") ?? operatingIncome;
-      const interestExpense = g(r, "InterestExpense");
-      const pretaxIncome = g(r, "PretaxIncome");
-      const taxProvision = g(r, "TaxProvision");
-      const equity = g(r, "StockholdersEquity");
-      const totalAssets = g(r, "TotalAssets");
-      const totalLiab = g(r, "TotalLiabilitiesNetMinorityInterest");
-      const totalDebt = g(r, "TotalDebt");
-      const opCashFlow = g(r, "OperatingCashFlow");
-      const capex = g(r, "CapitalExpenditure");
-      const freeCashFlow =
-        g(r, "FreeCashFlow") ??
-        (opCashFlow != null && capex != null ? opCashFlow + capex : null);
-      const currentAssets = g(r, "CurrentAssets");
-      const currentLiabilities = g(r, "CurrentLiabilities");
-      const longTermDebt = g(r, "LongTermDebt");
-      const shares =
-        g(r, "DilutedAverageShares") ?? g(r, "BasicAverageShares") ??
-        g(r, "OrdinarySharesNumber") ?? g(r, "ShareIssued");
-
-      const taxRate =
-        pretaxIncome && taxProvision != null && pretaxIncome !== 0
-          ? Math.min(Math.max(taxProvision / pretaxIncome, 0), 0.6)
-          : 0.21;
-      const nopat = ebit != null ? ebit * (1 - taxRate) : null;
-      const investedCapital =
-        equity != null || totalDebt != null ? (equity || 0) + (totalDebt || 0) : null;
-
-      byEnd.set(iso, {
-        year: dt.getUTCFullYear(),
-        label: type === "quarterly"
-          ? `Q${Math.floor(dt.getUTCMonth() / 3) + 1} '${String(dt.getUTCFullYear()).slice(2)}`
-          : undefined,
-        end: iso,
-        revenue, grossProfit, operatingIncome, netIncome, ebit, interestExpense,
-        grossMargin: safeDiv(grossProfit, revenue),
-        operatingMargin: safeDiv(operatingIncome, revenue),
-        netMargin: safeDiv(netIncome, revenue),
-        interestCoverage:
-          interestExpense && interestExpense !== 0
-            ? Math.abs(safeDiv(ebit, interestExpense))
-            : null,
-        totalEquity: equity, totalLiabilities: totalLiab, totalAssets, totalDebt,
-        debtToEquity: safeDiv(totalDebt, equity),
-        returnOnEquity: safeDiv(netIncome, equity),
-        operatingCashFlow: opCashFlow, capex, freeCashFlow,
-        fcfMargin: safeDiv(freeCashFlow, revenue),
-        roic: safeDiv(nopat, investedCapital),
-        currentAssets, currentLiabilities, longTermDebt, shares, // for F-Score
-      });
-    }
-    let series = [...byEnd.values()].sort((a, b) => (a.end < b.end ? -1 : 1));
-    if (type === "quarterly") series = series.slice(-8); // last ~2 years of quarters
-    return series;
+    const facts = await getCompanyFacts(symbol);
+    const gaap = facts && facts.facts && facts.facts["us-gaap"];
+    if (!gaap) return [];
+    return buildSecSeries(gaap, type === "annual" ? "annual" : "quarter");
   } catch {
     return [];
   }
@@ -515,40 +583,38 @@ async function getRpo(ticker) {
 
 async function getPeers(symbol) {
   try {
-    const rec = await yf.recommendationsBySymbol(symbol);
-    const peerSyms = ((rec && rec.recommendedSymbols) || [])
-      .map((x) => x.symbol)
-      .filter(Boolean)
-      .slice(0, 6);
-    const all = [symbol.toUpperCase(), ...peerSyms.map((s) => s.toUpperCase())];
-    // De-dupe while preserving order (current symbol first).
-    const ordered = [...new Set(all)];
-    const quotes = await yf.quote(ordered, {}, { validateResult: false });
-    const arr = Array.isArray(quotes) ? quotes : [quotes];
-    const bySym = new Map(arr.map((q) => [String(q.symbol).toUpperCase(), q]));
-    return ordered
-      .map((s) => {
-        const q = bySym.get(s);
-        if (!q) return null;
-        const price = num(q.regularMarketPrice);
-        const prevClose = num(q.regularMarketPreviousClose);
-        const changePct =
-          price != null && prevClose ? ((price - prevClose) / prevClose) * 100
-            : num(q.regularMarketChangePercent);
-        return {
-          symbol: (q.symbol || s).toUpperCase(),
-          name: q.shortName || q.longName || null,
-          price,
-          changePct,
-          marketCap: num(q.marketCap),
-          trailingPE: num(q.trailingPE),
-          forwardPE: num(q.forwardPE),
-          priceToBook: num(q.priceToBook),
-          divYield: num(q.trailingAnnualDividendYield),
-          isCurrent: s === symbol.toUpperCase(),
-        };
+    const cur = symbol.toUpperCase();
+    const list = await fh(`/stock/peers?symbol=${symbol}`);
+    let syms = [...new Set((Array.isArray(list) ? list : []).map((s) => String(s).toUpperCase()))];
+    if (!syms.includes(cur)) syms.unshift(cur);
+    syms = syms.slice(0, 6); // current + up to 5 peers (keeps us well under the rate limit)
+    const rows = await Promise.all(
+      syms.map(async (s) => {
+        try {
+          const [q, mres, p] = await Promise.all([
+            fh(`/quote?symbol=${s}`),
+            fh(`/stock/metric?symbol=${s}&metric=all`),
+            fh(`/stock/profile2?symbol=${s}`),
+          ]);
+          const M = (mres && mres.metric) || {};
+          return {
+            symbol: s,
+            name: (p && p.name) || null,
+            price: q && q.c ? num(q.c) : null,
+            changePct: num(q && q.dp),
+            marketCap: p && p.marketCapitalization != null ? p.marketCapitalization * 1e6 : null,
+            trailingPE: num(M.peTTM),
+            forwardPE: num(M.forwardPE),
+            priceToBook: num(M.pbQuarterly) ?? num(M.pbAnnual) ?? num(M.pb),
+            divYield: M.dividendYieldIndicatedAnnual != null ? M.dividendYieldIndicatedAnnual / 100 : null,
+            isCurrent: s === cur,
+          };
+        } catch {
+          return null;
+        }
       })
-      .filter(Boolean);
+    );
+    return rows.filter(Boolean);
   } catch {
     return [];
   }
@@ -558,162 +624,149 @@ async function getPeers(symbol) {
 
 async function getFundamentals(symbol, opts = {}) {
   const lite = !!opts.lite; // screener mode: skip news/peers/RPO/quarterly for speed
-  const modules = [
-    "price",
-    "summaryDetail",
-    "defaultKeyStatistics",
-    "financialData",
-    "assetProfile",
-    "earningsHistory",
-    "calendarEvents",
-    "majorHoldersBreakdown",
-  ];
 
-  // Kick off news in parallel so it doesn't add to the fundamentals latency.
-  // In lite (screener) mode we skip everything the risk score doesn't need.
+  // SEC (statements/F-Score/RPO) + Finnhub (news/peers) — kicked off in parallel.
   const newsPromise = lite ? Promise.resolve([]) : getNews(symbol);
   const annualPromise = getTimeSeries(symbol, "annual"); // needed for score
   const quarterlyPromise = lite ? Promise.resolve([]) : getTimeSeries(symbol, "quarterly");
   const rpoPromise = lite ? Promise.resolve(null) : withTimeout(getRpoCached(symbol), 9000).catch(() => null);
   const peersPromise = lite ? Promise.resolve([]) : getPeers(symbol);
 
-  // validateResult:false keeps fields that aren't in the strict schema
-  // (important — historical balance-sheet / cash-flow line items live there).
-  const q = await yf.quoteSummary(
-    symbol,
-    { modules },
-    { validateResult: false }
-  );
+  // Current market data + metrics from Finnhub (parallel).
+  const [quote, prof, metricRes, reco] = await Promise.all([
+    lite ? Promise.resolve({}) : fh(`/quote?symbol=${symbol}`),   // price: not part of the score
+    fh(`/stock/profile2?symbol=${symbol}`, lite),
+    fh(`/stock/metric?symbol=${symbol}&metric=all`, lite),
+    lite ? Promise.resolve([]) : fh(`/stock/recommendation?symbol=${symbol}`).catch(() => []),
+  ]);
+  const m = (metricRes && metricRes.metric) || {};
+  const pctd = (v) => (v == null ? null : num(v) / 100); // Finnhub % -> decimal
 
-  const price = q.price || {};
-  const sd = q.summaryDetail || {};
-  const ks = q.defaultKeyStatistics || {};
-  const fd = q.financialData || {};
-  const ap = q.assetProfile || {};
-  const mh = q.majorHoldersBreakdown || {};
-  const ce = q.calendarEvents || {};
-  const ceEarn = ce.earnings || {};
+  const price = quote && quote.c ? num(quote.c) : null;
+  const marketCap = prof && prof.marketCapitalization != null ? prof.marketCapitalization * 1e6 : null;
+  const sharesOut = prof && prof.shareOutstanding != null ? prof.shareOutstanding * 1e6 : null;
+  const currency = (prof && prof.currency) || "USD";
 
-  // earningsDate is an array: one confirmed date, or two dates (an estimated window).
-  const earningsDates = (ceEarn.earningsDate || [])
-    .map(isoDate)
-    .filter(Boolean)
-    .sort();
-  const events = {
-    nextEarningsDate: earningsDates[0] || null,
-    nextEarningsDateEnd:
-      earningsDates.length > 1 ? earningsDates[earningsDates.length - 1] : null,
-    earningsDateIsEstimate: !!ceEarn.isEarningsDateEstimate,
-    epsEstimate: num(ceEarn.earningsAverage),
-    exDividendDate: isoDate(ce.exDividendDate),
-  };
+  // Latest SEC annual period gives absolute $ figures Finnhub doesn't expose.
+  const timeSeries = await annualPromise;
+  const latest = timeSeries.length ? timeSeries[timeSeries.length - 1] : {};
+  const ebitda = m.ebitdPerShareTTM != null && sharesOut != null ? num(m.ebitdPerShareTTM) * sharesOut : null;
 
-  // Latest reported quarter (actual vs estimate) for the report's earnings card.
-  const ehist = q.earningsHistory?.history || [];
-  const lastEh = ehist.length ? ehist[ehist.length - 1] : null;
-  const earnings = {
-    period: lastEh ? lastEh.period : null,
-    quarter: lastEh ? isoDate(lastEh.quarter) : null,
-    epsActual: lastEh ? num(lastEh.epsActual) : null,
-    epsEstimate: lastEh ? num(lastEh.epsEstimate) : null,
-    surprisePercent: lastEh ? num(lastEh.surprisePercent) : null,
-    nextEpsEstimate: num(ceEarn.earningsAverage),
-    nextEarningsDate: events.nextEarningsDate,
-  };
+  // Total cash (cash + short-term investments) from SEC at the latest period end.
+  let totalCash = null;
+  try {
+    const facts = await getCompanyFacts(symbol);
+    const gaap = facts && facts.facts && facts.facts["us-gaap"];
+    if (gaap && latest.end) {
+      const combined = instantByEnd(gaap, ["CashCashEquivalentsAndShortTermInvestments"]);
+      if (combined.has(latest.end)) totalCash = combined.get(latest.end);
+      else {
+        const cash = instantByEnd(gaap, ["CashAndCashEquivalentsAtCarryingValue"]);
+        const sti = instantByEnd(gaap, ["ShortTermInvestments"]);
+        if (cash.has(latest.end)) totalCash = cash.get(latest.end) + (sti.has(latest.end) ? sti.get(latest.end) : 0);
+      }
+    }
+  } catch {}
 
-  // ---- profile / header ----
+  const totalDebt = latest.totalDebt ?? null;
+  const netDebt = totalDebt != null && totalCash != null ? totalDebt - totalCash : null;
+
+  // Analyst rating from the buy/hold/sell trend (Finnhub price targets are premium).
+  let analystRecommendation = null, numAnalysts = null;
+  if (Array.isArray(reco) && reco.length) {
+    const r0 = reco[0];
+    const buy = (r0.strongBuy || 0) + (r0.buy || 0), hold = r0.hold || 0, sell = (r0.sell || 0) + (r0.strongSell || 0);
+    numAnalysts = buy + hold + sell || null;
+    analystRecommendation = buy >= hold && buy >= sell
+      ? ((r0.strongBuy || 0) > (r0.buy || 0) ? "strong_buy" : "buy")
+      : sell > buy && sell > hold ? "sell" : "hold";
+  }
+
+  // Finnhub free tier doesn't include next-earnings date or ex-dividend date.
+  const events = { nextEarningsDate: null, nextEarningsDateEnd: null, earningsDateIsEstimate: false, epsEstimate: null, exDividendDate: null };
+  const earnings = { period: null, quarter: null, epsActual: null, epsEstimate: null, surprisePercent: null, nextEpsEstimate: null, nextEarningsDate: null };
+
   const profile = {
-    symbol: (price.symbol || symbol).toUpperCase(),
-    name: price.longName || price.shortName || symbol,
-    exchange: price.exchangeName || price.exchange || null,
-    currency: price.currency || fd.financialCurrency || "USD",
-    sector: ap.sector || null,
-    industry: ap.industry || null,
-    employees: num(ap.fullTimeEmployees),
-    summary: ap.longBusinessSummary || null,
-    price: num(price.regularMarketPrice),
-    changePct: num(price.regularMarketChangePercent),
-    marketCap: num(price.marketCap) ?? num(sd.marketCap),
-    fiftyTwoWeekLow: num(sd.fiftyTwoWeekLow),
-    fiftyTwoWeekHigh: num(sd.fiftyTwoWeekHigh),
-    analystRecommendation: fd.recommendationKey || null,
-    targetMeanPrice: num(fd.targetMeanPrice),
-    numAnalysts: num(fd.numberOfAnalystOpinions),
+    symbol: (prof && prof.ticker ? prof.ticker : symbol).toUpperCase(),
+    name: (prof && prof.name) || null,
+    exchange: (prof && prof.exchange) || null,
+    currency,
+    sector: (prof && prof.finnhubIndustry) || null,
+    industry: (prof && prof.finnhubIndustry) || null,
+    employees: null,
+    summary: null,
+    price,
+    changePct: num(quote && quote.dp),
+    marketCap,
+    fiftyTwoWeekLow: num(m["52WeekLow"]),
+    fiftyTwoWeekHigh: num(m["52WeekHigh"]),
+    analystRecommendation,
+    targetMeanPrice: null,
+    numAnalysts,
   };
 
-  // ---- derived cross-statement metrics ----
-  const _totalDebt = num(fd.totalDebt);
-  const _totalCash = num(fd.totalCash);
-  const _ebitda = num(fd.ebitda);
-  const _freeCashFlow = num(fd.freeCashflow);
-  const _marketCap = num(price.marketCap) ?? num(sd.marketCap);
-  const _netDebt =
-    _totalDebt != null && _totalCash != null ? _totalDebt - _totalCash : null;
-
-  // ---- current point-in-time metrics, grouped by category ----
   const current = {
     profitability: {
-      grossMargin: num(fd.grossMargins),
-      operatingMargin: num(fd.operatingMargins),
-      netMargin: num(fd.profitMargins),
-      ebitdaMargin: num(fd.ebitdaMargins),
-      returnOnEquity: num(fd.returnOnEquity),
-      returnOnAssets: num(fd.returnOnAssets),
+      grossMargin: pctd(m.grossMarginTTM),
+      operatingMargin: pctd(m.operatingMarginTTM),
+      netMargin: pctd(m.netProfitMarginTTM),
+      ebitdaMargin: ebitda != null && latest.revenue ? ebitda / latest.revenue : null,
+      returnOnEquity: pctd(m.roeTTM),
+      returnOnAssets: pctd(m.roaTTM),
     },
     growth: {
-      revenueGrowthYoY: num(fd.revenueGrowth),
-      earningsGrowthYoY: num(fd.earningsGrowth),
-      earningsQuarterlyGrowth: num(ks.earningsQuarterlyGrowth),
+      revenueGrowthYoY: pctd(m.revenueGrowthTTMYoy),
+      earningsGrowthYoY: pctd(m.epsGrowthTTMYoy),
+      earningsQuarterlyGrowth: pctd(m.epsGrowthQuarterlyYoy),
     },
     cashFlow: {
-      operatingCashFlow: num(fd.operatingCashflow),
-      freeCashFlow: num(fd.freeCashflow),
-      totalRevenue: num(fd.totalRevenue),
-      ebitda: num(fd.ebitda),
-      totalCash: num(fd.totalCash),
-      netIncomeToCommon: num(ks.netIncomeToCommon),
+      operatingCashFlow: latest.operatingCashFlow ?? null,
+      freeCashFlow: latest.freeCashFlow ?? null,
+      totalRevenue: latest.revenue ?? null,
+      ebitda,
+      totalCash,
+      netIncomeToCommon: latest.netIncome ?? null,
     },
     balanceSheet: {
-      totalDebt: num(fd.totalDebt),
-      debtToEquity: num(fd.debtToEquity), // Yahoo reports this as a percentage
-      currentRatio: num(fd.currentRatio),
-      quickRatio: num(fd.quickRatio),
-      bookValuePerShare: num(ks.bookValue),
-      totalCash: _totalCash,
-      netDebt: _netDebt,
-      netDebtToEbitda: safeDiv(_netDebt, _ebitda),
+      totalDebt,
+      // Finnhub gives D/E as a ratio; the UI expects Yahoo's percentage convention.
+      debtToEquity: m["totalDebt/totalEquityQuarterly"] != null ? num(m["totalDebt/totalEquityQuarterly"]) * 100
+        : m["totalDebt/totalEquityAnnual"] != null ? num(m["totalDebt/totalEquityAnnual"]) * 100 : null,
+      currentRatio: num(m.currentRatioQuarterly) ?? num(m.currentRatioAnnual),
+      quickRatio: num(m.quickRatioQuarterly) ?? num(m.quickRatioAnnual),
+      bookValuePerShare: num(m.bookValuePerShareQuarterly) ?? num(m.bookValuePerShareAnnual),
+      totalCash,
+      netDebt,
+      netDebtToEbitda: safeDiv(netDebt, ebitda),
     },
     valuation: {
-      trailingPE: num(sd.trailingPE),
-      forwardPE: num(sd.forwardPE) ?? num(ks.forwardPE),
-      pegRatio: num(ks.pegRatio),
-      priceToSales: num(sd.priceToSalesTrailing12Months),
-      priceToBook: num(ks.priceToBook),
-      enterpriseToEbitda: num(ks.enterpriseToEbitda),
-      enterpriseToRevenue: num(ks.enterpriseToRevenue),
-      enterpriseValue: num(ks.enterpriseValue),
-      trailingEps: num(ks.trailingEps),
-      forwardEps: num(ks.forwardEps),
-      fcfYield: safeDiv(_freeCashFlow, _marketCap),
+      trailingPE: num(m.peTTM),
+      forwardPE: num(m.forwardPE),
+      pegRatio: num(m.pegTTM) ?? num(m.forwardPEG),
+      priceToSales: num(m.psTTM),
+      priceToBook: num(m.pbQuarterly) ?? num(m.pbAnnual) ?? num(m.pb),
+      enterpriseToEbitda: num(m.evEbitdaTTM),
+      enterpriseToRevenue: num(m.evRevenueTTM),
+      enterpriseValue: m.enterpriseValue != null ? num(m.enterpriseValue) * 1e6 : null,
+      trailingEps: num(m.epsTTM),
+      forwardEps: null,
+      fcfYield: latest.freeCashFlow != null && marketCap ? latest.freeCashFlow / marketCap : null,
     },
     capitalAllocation: {
-      heldPercentInsiders: num(ks.heldPercentInsiders) ?? num(mh.insidersPercentHeld),
-      heldPercentInstitutions:
-        num(ks.heldPercentInstitutions) ?? num(mh.institutionsPercentHeld),
-      sharesOutstanding: num(ks.sharesOutstanding),
-      beta: num(ks.beta) ?? num(sd.beta),
+      heldPercentInsiders: null,      // Finnhub ownership is premium
+      heldPercentInstitutions: null,
+      sharesOutstanding: sharesOut,
+      beta: num(m.beta),
     },
     dividend: {
-      dividendYield: num(sd.dividendYield),
-      dividendRate: num(sd.dividendRate),
-      payoutRatio: num(sd.payoutRatio),
-      fiveYearAvgDividendYield: num(sd.fiveYearAvgDividendYield),
+      dividendYield: pctd(m.dividendYieldIndicatedAnnual) ?? pctd(m.currentDividendYieldTTM),
+      dividendRate: num(m.dividendPerShareTTM) ?? num(m.dividendPerShareAnnual),
+      payoutRatio: pctd(m.payoutRatioTTM) ?? pctd(m.payoutRatioAnnual),
+      fiveYearAvgDividendYield: null,
     },
   };
 
-  // ---- historical time series (annual + quarterly) from fundamentalsTimeSeries ----
   const news = await newsPromise;
-  const timeSeries = await annualPromise;
   const timeSeriesQuarterly = await quarterlyPromise;
   const rpo = await rpoPromise;
   const peers = await peersPromise;
@@ -762,27 +815,15 @@ app.get("/fundamentals/:ticker", async (req, res) => {
         .json({ error: `No data found for "${ticker}". Check the symbol.` });
     }
     console.error(`[${ticker}]`, msg);
-    res.status(502).json({ error: "Could not reach Yahoo Finance. Try again." });
+    res.status(502).json({ error: "Could not load market data. Try again." });
   }
 });
 
-app.get("/prices/:ticker", async (req, res) => {
-  const ticker = String(req.params.ticker || "").trim().toUpperCase();
-  if (!ticker || !/^[A-Z0-9.\-^=]{1,12}$/.test(ticker)) {
-    return res.status(400).json({ error: "Enter a valid ticker symbol." });
-  }
-  try {
-    const period1 = new Date();
-    period1.setFullYear(period1.getFullYear() - 1);
-    const r = await yf.chart(ticker, { period1, interval: "1wk" });
-    const prices = (r.quotes || [])
-      .filter((qq) => qq && qq.date && qq.close != null)
-      .map((qq) => ({ date: isoDate(qq.date), close: num(qq.close) }));
-    res.json({ prices, currency: (r.meta && r.meta.currency) || "USD" });
-  } catch (err) {
-    console.error(`[prices ${ticker}]`, err && err.message ? err.message : err);
-    res.status(502).json({ error: "Could not load price history." });
-  }
+// Historical price chart is disabled: no free cloud-accessible source remains
+// (Finnhub candles are premium; Stooq now blocks server requests). Returns an
+// empty series so the Risk Report's price trend just renders nothing.
+app.get("/prices/:ticker", (_req, res) => {
+  res.json({ prices: [], currency: "USD" });
 });
 
 // ---- Risk-Report score (server port of computeRisk() in the dashboard) ------
