@@ -54,12 +54,18 @@ function fhTake(bulk) {
 }
 async function fh(q, bulk = false) {
   if (!FINNHUB_KEY) throw new Error("FINNHUB_API_KEY not set");
-  await fhTake(bulk);
+  await fhTake(bulk); // rate-limit wait happens BEFORE the fetch timeout starts
   const sep = q.includes("?") ? "&" : "?";
-  const r = await fetch(`${FINNHUB}${q}${sep}token=${FINNHUB_KEY}`);
-  if (r.status === 429) throw new Error("Finnhub rate limit (429)");
-  if (!r.ok) throw new Error(`Finnhub ${q.split("?")[0]} ${r.status}`);
-  return r.json();
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(`${FINNHUB}${q}${sep}token=${FINNHUB_KEY}`, { signal: ctl.signal });
+    if (r.status === 429) throw new Error("Finnhub rate limit (429)");
+    if (!r.ok) throw new Error(`Finnhub ${q.split("?")[0]} ${r.status}`);
+    return r.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // SEC EDGAR requires a descriptive User-Agent. Set SEC_UA to your email for best compliance.
@@ -933,7 +939,10 @@ async function runScreen(uid) {
     while (i < uni.tickers.length) {
       const sym = uni.tickers[i++];
       try {
-        const d = await withTimeout(getFundamentals(sym, { lite: true }), 20000);
+        // Generous timeout: under the Finnhub rate limiter a ticker can sit in
+        // the queue for minutes during a full scan, so this must exceed the whole
+        // scan's worst case (a per-fetch timeout inside fh() catches real hangs).
+        const d = await withTimeout(getFundamentals(sym, { lite: true }), 6 * 60 * 1000);
         const r = riskScore(d);
         if (r.overall != null) {
           out.push({
